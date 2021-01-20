@@ -1,0 +1,12 @@
+﻿################################################################################
+# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
+################################################################################
+
+.vs/
+releases/
+rhscz.cer
+rhscz.pfx
+rhscz.pvk
+sign.sgui
+output/
+steamupload/steamupload.aps
