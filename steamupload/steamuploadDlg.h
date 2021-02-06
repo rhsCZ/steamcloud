@@ -70,7 +70,7 @@ public:
 	afx_msg void OnBnClickedExit();
 	bool trayenable;
 	bool minimizeen;
-	bool init;
+	bool init = false;
 	CButton* trayen = {};
 	CButton* checkbox = {};
 	CButton* upload = {};

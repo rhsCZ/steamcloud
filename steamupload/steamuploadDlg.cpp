@@ -851,7 +851,11 @@ PCHAR* CsteamuploadDlg::CommandLineToArgvA(PCHAR CmdLine,int* _argc)
 void CsteamuploadDlg::OnBnClickedConnect()
 {
 	Clearlist();
-	SteamAPI_Shutdown();
+	if (init)
+	{
+		SteamAPI_Shutdown();
+		init = false;
+	}
 	bool closed = false;
 	int appid=-1;
 	appid = GetDlgItemInt(IDC_APPID);
@@ -969,17 +973,31 @@ void CsteamuploadDlg::OnBnClickedUpload()
 	if (dlg.DoModal() == IDOK)
 	{
 		
+		ULONG filesize=0;
 		char *buffer = (char*)malloc(104857600);
 		ZeroMemory(buffer, 104857600);
 		CT2A text(dlg.GetPathName());
 		CT2A text2(dlg.GetFileName());
 		fstream file;
+		HANDLE files = CreateFileA(text.m_psz, GENERIC_READ, NULL, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		DWORD lasterror = GetLastError();
+		if (GetLastError() == ERROR_FILE_NOT_FOUND)
+		{
+			MessageBox(L"Unable to open file!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			goto end;
+		}
+		filesize = GetFileSize(files,NULL);
+		CloseHandle(files);
+		if (filesize > 104857600)
+		{
+			MessageBox(L"File is larger then 100MB!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			goto end;
+		}
 		file.open(text.m_psz,ios::in|ios::out|ios::binary);
 		if (file.is_open())
 		{
-			file.read(buffer, 104857600);
-			size_t lenght = strlen(buffer);
-			if (!steam.SteamRemoteStorage()->FileWrite(text2.m_psz, buffer, strlen(buffer)))
+			file.read(buffer, (ULONG)104857600);
+			if (!steam.SteamRemoteStorage()->FileWrite(text2.m_psz, buffer, (int32)strlen(buffer)))
 			{
 				MessageBox(L"Unable to upload file!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
 			}
@@ -994,6 +1012,8 @@ void CsteamuploadDlg::OnBnClickedUpload()
 		{
 			MessageBox(L"Error opening file!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
 		}
+		end:
+		free(buffer);
 	}
 }
 
@@ -1006,7 +1026,7 @@ void CsteamuploadDlg::OnBnClickedDirupload()
 	CFileDialog dlg(TRUE, NULL, NULL, OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_NONETWORKBUTTON | OFN_PATHMUSTEXIST, szFilter, this);
 	if (dlg.DoModal() == IDOK)
 	{
-		
+		ULONG filesize;
 		wchar_t filebuf[500] = {};
 		char filename[500] = {};
 		char* buffer = (char*)malloc(104857600);
@@ -1015,6 +1035,19 @@ void CsteamuploadDlg::OnBnClickedDirupload()
 		CT2A text(dlg.GetPathName());
 		CT2A text2(dlg.GetFileName());
 		ZeroMemory(returned, sizeof(returned));
+		HANDLE files = CreateFileA(text.m_psz, GENERIC_READ, NULL, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (GetLastError() == ERROR_FILE_NOT_FOUND)
+		{
+			MessageBox(L"Unable to open file!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			goto end;
+		}
+		filesize = GetFileSize(files, NULL);
+		CloseHandle(files);
+		if (filesize > (ULONG)104857600)
+		{
+			MessageBox(L"File is larger then 100MB!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			goto end;
+		}
 		if(dialog.DoModal() == (IDOK||IDCANCEL))
 		{
 			if (wcscmp(returned, L""))
@@ -1035,8 +1068,7 @@ void CsteamuploadDlg::OnBnClickedDirupload()
 			if (file.is_open())
 			{
 				file.read(buffer, 10000);
-				size_t lenght = strlen(buffer);
-				if (!steam.SteamRemoteStorage()->FileWrite(filename, buffer, strlen(buffer)))
+				if (!steam.SteamRemoteStorage()->FileWrite(filename, buffer, (int32)strlen(buffer)))
 				{
 					MessageBox(L"Unable to upload file!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
 				}
@@ -1052,6 +1084,8 @@ void CsteamuploadDlg::OnBnClickedDirupload()
 		{
 			MessageBox(L"Error opening file!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
 		}
+		end:
+		free(buffer);
 	}
 }
 
@@ -1108,6 +1142,7 @@ void CsteamuploadDlg::OnBnClickedRefresh()
 void CsteamuploadDlg::OnBnClickedDisconnect()
 {
 	SteamAPI_Shutdown();
+	init = false;
 	steam.Clear();
 	download->EnableWindow(0);
 	deletefile->EnableWindow(0);
