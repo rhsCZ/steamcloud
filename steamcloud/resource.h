@@ -2,7 +2,7 @@
 // Microsoft Visual C++ vygeneroval soubor zahrnutí.
 // Použito steamcloud.rc
 //
-#define IDD_STEAMCLOUD_DIALOG          101
+#define IDD_STEAMCLOUD_DIALOG           101
 #define IDR_ICON                        128
 #define ID_MENU_MINIMIZE                129
 #define IDD_DIALOG1                     130
@@ -20,6 +20,9 @@
 #define IDC_RICHEDIT21                  1011
 #define IDC_QUOTA                       1012
 #define IDC_DISCONNECT                  1013
+#define IDC_BYTES                       1015
+#define IDC_KBYTES                      1016
+#define IDC_MBYTES                      1017
 #define ID_MENU_MIN                     32771
 #define ID_MENU_MAX                     32772
 #define ID_MENU_EXIT                    32773
@@ -28,9 +31,9 @@
 // 
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
-#define _APS_NEXT_RESOURCE_VALUE        131
+#define _APS_NEXT_RESOURCE_VALUE        132
 #define _APS_NEXT_COMMAND_VALUE         32774
-#define _APS_NEXT_CONTROL_VALUE         1014
+#define _APS_NEXT_CONTROL_VALUE         1018
 #define _APS_NEXT_SYMED_VALUE           102
 #endif
 #endif

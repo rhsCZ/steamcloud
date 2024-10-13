@@ -30,7 +30,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v142</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
     <UseOfMfc>Dynamic</UseOfMfc>
     <CLRSupport>false</CLRSupport>
@@ -38,7 +38,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v142</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
     <UseOfMfc>Dynamic</UseOfMfc>
@@ -47,7 +47,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v142</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
     <UseOfMfc>Dynamic</UseOfMfc>
     <CLRSupport>false</CLRSupport>
@@ -55,7 +55,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v142</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
     <UseOfMfc>Dynamic</UseOfMfc>
@@ -255,6 +255,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="framework.h" />
+    <ClInclude Include="functions.h" />
     <ClInclude Include="prompt.h" />
     <ClInclude Include="steamcloud.h" />
     <ClInclude Include="steamcloudDlg.h" />
@@ -265,6 +266,7 @@
     <ClInclude Include="steam\isteamappticket.h" />
     <ClInclude Include="steam\isteamclient.h" />
     <ClInclude Include="steam\isteamcontroller.h" />
+    <ClInclude Include="steam\isteamdualsense.h" />
     <ClInclude Include="steam\isteamfriends.h" />
     <ClInclude Include="steam\isteamgamecoordinator.h" />
     <ClInclude Include="steam\isteamgameserver.h" />
@@ -296,6 +298,7 @@
     <ClInclude Include="steam\steamdatagram_tickets.h" />
     <ClInclude Include="steam\steamencryptedappticket.h" />
     <ClInclude Include="steam\steamhttpenums.h" />
+    <ClInclude Include="steam\steamnetworkingfakeip.h" />
     <ClInclude Include="steam\steamnetworkingtypes.h" />
     <ClInclude Include="steam\steamps3params.h" />
     <ClInclude Include="steam\steamtypes.h" />

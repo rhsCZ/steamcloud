@@ -10,5 +10,9 @@
 // add headers that you want to pre-compile here
 #include "framework.h"
 #include <afxwin.h>
-
+#ifdef _DEBUG
+#define _CRTDBG_MAP_ALLOC
+#include <stdlib.h>
+#include <crtdbg.h>
+#endif
 #endif //PCH_H

@@ -5,13 +5,24 @@
 #include "steam/steam_api.h"
 #include "afxdialogex.h"
 #include "afxwin.h"
+#include <vector>
+#include <iostream>
+#include "functions.h"
+#include <iterator>
+#include <algorithm>
 //#include <thread>
 //#include <fstream>
 using namespace std;
-
+#define MAX_UNICODE_PATH 32766
 #define bufferSize 10
 #define WM_SHOWPAGE WM_APP+2
 #define WM_TRAY_ICON_NOTIFY_MESSAGE (WM_USER + 1)
+#define MAX_FILES_COUNT (ULONG)10
+#define MAX_FILES_BUFFER_SIZE (MAX_FILES_COUNT*MAX_UNICODE_PATH)-1
+
+
+
+
 // Chasher2Dlg dialog
 class CsteamcloudDlg : public CDialog
 {
@@ -24,7 +35,8 @@ private:
 // Construction
 public:
 	NOTIFYICONDATA	m_nidIconData;
-	CsteamcloudDlg(CWnd* pParent = nullptr);
+	CsteamcloudDlg(CWnd* pParent = nullptr);	// standard constructor
+	~CsteamcloudDlg(); //
 	void TraySetMinimizeToTray(BOOL bMinimizeToTray = TRUE);
 	BOOL TraySetMenu(UINT nResourceID, UINT nDefaultPos = 0);
 	BOOL TraySetMenu(HMENU hMenu, UINT nDefaultPos = 0);
@@ -71,16 +83,30 @@ public:
 	bool trayenable;
 	bool minimizeen;
 	bool init = false;
+	int sizeunit = 0;
+	SteamAPICallCompleted_t steamcall;
 	CButton* trayen = {};
+	CButton* Bytes = {};
+	CButton* Kbytes = {};
+	CButton* Mbytes = {};
 	CButton* checkbox = {};
 	CButton* upload = {};
 	CButton* download = {};
+	CButton* connect = {};
+	CButton* exitb = {};
+	CButton* cancel = {};
 	CButton* uploaddir = {};
 	CButton* deletefile = {};
 	CButton* refresh = {};
 	CButton* disconnect = {};
 	CStatic* quota = {};
-	CSteamAPIContext steam;
+	//CRect buttonrect = {};
+	//CRgn buttonrgn = {};
+	//CSteamAPIContext steam;
+	//HSteamPipe steampipe;
+	//HSteamUser steamuser;
+	//ISteamClient* steam;
+	ISteamRemoteStorage* steamremote;
 	HKEY traykey;
 	CListCtrl* listfiles;
 	DWORD traykeyvalue;
@@ -100,6 +126,10 @@ public:
 	afx_msg void OnBnClickedDownload();
 	void GetFiles();
 	void Clearlist();
+	//void OnSteamCallComplete(RemoteStorageFileWriteAsyncComplete_t _callback, bool _failure);
 	afx_msg void OnBnClickedRefresh();
 	afx_msg void OnBnClickedDisconnect();
+	afx_msg void OnBnClickedBytes();
+	afx_msg void OnBnClickedKbytes();
+	afx_msg void OnBnClickedMbytes();
 };

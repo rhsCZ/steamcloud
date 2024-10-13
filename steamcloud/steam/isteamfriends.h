@@ -103,6 +103,10 @@ struct FriendGameInfo_t
 };
 #pragma pack( pop )
 
+// special values for FriendGameInfo_t::m_usQueryPort
+const uint16 k_usFriendGameInfoQueryPort_NotInitialized = 0xFFFF;		// We haven't asked the GS for this query port's actual value yet.  Was #define QUERY_PORT_NOT_INITIALIZED in older versions of Steamworks SDK.
+const uint16 k_usFriendGameInfoQueryPort_Error          = 0xFFFE;		// We were unable to get the query port for this server.  Was #define QUERY_PORT_ERROR in older versions of Steamworks SDK.
+
 // maximum number of characters in a user's name. Two flavors; one for UTF-8 and one for UTF-16.
 // The UTF-8 version has to be very generous to accomodate characters that get large when encoded
 // in UTF-8.
@@ -157,6 +161,32 @@ enum EActivateGameOverlayToWebPageMode
 															// will also close. When the user closes the browser window, the overlay will automatically close.
 };
 
+//-----------------------------------------------------------------------------
+// Purpose: See GetProfileItemPropertyString and GetProfileItemPropertyUint
+//-----------------------------------------------------------------------------
+enum ECommunityProfileItemType
+{
+	k_ECommunityProfileItemType_AnimatedAvatar		 = 0,
+	k_ECommunityProfileItemType_AvatarFrame			 = 1,
+	k_ECommunityProfileItemType_ProfileModifier		 = 2,
+	k_ECommunityProfileItemType_ProfileBackground	 = 3,
+	k_ECommunityProfileItemType_MiniProfileBackground = 4,
+};
+enum ECommunityProfileItemProperty
+{
+	k_ECommunityProfileItemProperty_ImageSmall	   = 0, // string
+	k_ECommunityProfileItemProperty_ImageLarge	   = 1, // string
+	k_ECommunityProfileItemProperty_InternalName   = 2, // string
+	k_ECommunityProfileItemProperty_Title		   = 3, // string
+	k_ECommunityProfileItemProperty_Description	   = 4, // string
+	k_ECommunityProfileItemProperty_AppID		   = 5, // uint32
+	k_ECommunityProfileItemProperty_TypeID		   = 6, // uint32
+	k_ECommunityProfileItemProperty_Class		   = 7, // uint32
+	k_ECommunityProfileItemProperty_MovieWebM	   = 8, // string
+	k_ECommunityProfileItemProperty_MovieMP4	   = 9, // string
+	k_ECommunityProfileItemProperty_MovieWebMSmall = 10, // string
+	k_ECommunityProfileItemProperty_MovieMP4Small  = 11, // string
+};
 
 //-----------------------------------------------------------------------------
 // Purpose: interface to accessing information about individual users,
@@ -422,6 +452,14 @@ public:
 
 	// Activates the game overlay to open an invite dialog that will send the provided Rich Presence connect string to selected friends
 	virtual void ActivateGameOverlayInviteDialogConnectString( const char *pchConnectString ) = 0;
+
+	// Steam Community items equipped by a user on their profile
+	// You can register for EquippedProfileItemsChanged_t to know when a friend has changed their equipped profile items
+	STEAM_CALL_RESULT( EquippedProfileItems_t )
+	virtual SteamAPICall_t RequestEquippedProfileItems( CSteamID steamID ) = 0;
+	virtual bool BHasEquippedProfileItem( CSteamID steamID, ECommunityProfileItemType itemType ) = 0;
+	virtual const char *GetProfileItemPropertyString( CSteamID steamID, ECommunityProfileItemType itemType, ECommunityProfileItemProperty prop ) = 0;
+	virtual uint32 GetProfileItemPropertyUint( CSteamID steamID, ECommunityProfileItemType itemType, ECommunityProfileItemProperty prop ) = 0;
 };
 
 #define STEAMFRIENDS_INTERFACE_VERSION "SteamFriends017"
@@ -480,7 +518,10 @@ enum EPersonaChange
 struct GameOverlayActivated_t
 {
 	enum { k_iCallback = k_iSteamFriendsCallbacks + 31 };
-	uint8 m_bActive;	// true if it's just been activated, false otherwise
+	uint8 m_bActive;		// true if it's just been activated, false otherwise
+	bool m_bUserInitiated;	// true if the user asked for the overlay to be activated/deactivated
+	AppId_t m_nAppID;		// the appID of the game (should always be the current game)
+	uint32 m_dwOverlayPID;	// used internally
 };
 
 
@@ -687,6 +728,29 @@ struct OverlayBrowserProtocolNavigation_t
 	char rgchURI[ 1024 ];
 };
 
+//-----------------------------------------------------------------------------
+// Purpose: A user's equipped profile items have changed
+//-----------------------------------------------------------------------------
+struct EquippedProfileItemsChanged_t
+{
+	enum { k_iCallback = k_iSteamFriendsCallbacks + 50 };
+	CSteamID m_steamID;
+};
+
+//-----------------------------------------------------------------------------
+// Purpose: 
+//-----------------------------------------------------------------------------
+struct EquippedProfileItems_t
+{
+	enum { k_iCallback = k_iSteamFriendsCallbacks + 51 };
+	EResult m_eResult;
+	CSteamID m_steamID;
+	bool m_bHasAnimatedAvatar;
+	bool m_bHasAvatarFrame;
+	bool m_bHasProfileModifier;
+	bool m_bHasProfileBackground;
+	bool m_bHasMiniProfileBackground;
+};
 
 #pragma pack( pop )
 

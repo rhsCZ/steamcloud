@@ -84,7 +84,7 @@ public:
 	// return the buildid of this app, may change at any time based on backend updates to the game
 	virtual int GetAppBuildId() = 0;
 
-	// Request all proof of purchase keys for the calling appid and asociated DLC.
+	// Request all proof of purchase keys for the calling appid and associated DLC.
 	// A series of AppProofOfPurchaseKeyResponse_t callbacks will be sent with
 	// appropriate appid values, ending with a final callback where the m_nAppId
 	// member is k_uAppIdInvalid (zero).
@@ -108,6 +108,18 @@ public:
 
 	// check if game is a timed trial with limited playtime
 	virtual bool BIsTimedTrial( uint32* punSecondsAllowed, uint32* punSecondsPlayed ) = 0; 
+
+	// set current DLC AppID being played (or 0 if none). Allows Steam to track usage of major DLC extensions
+	virtual bool SetDlcContext( AppId_t nAppID ) = 0;
+
+	// returns total number of known app beta branches (including default "public" branch )
+	virtual int  GetNumBetas( int *pnAvailable, int *pnPrivate ) = 0; //
+
+	// return beta branch details, name, description, current BuildID and state flags (EBetaBranchFlags)
+	virtual bool GetBetaInfo( int iBetaIndex, uint32 *punFlags, uint32 *punBuildID, char *pchBetaName, int cchBetaName, char *pchDescription, int cchDescription ) = 0; // iterate through
+
+	// select this beta branch for this app as active, might need the game to restart so Steam can update to that branch
+	virtual bool SetActiveBeta( const char *pchBetaName ) = 0;
 };
 
 #define STEAMAPPS_INTERFACE_VERSION "STEAMAPPS_INTERFACE_VERSION008"
@@ -115,10 +127,6 @@ public:
 // Global interface accessor
 inline ISteamApps *SteamApps();
 STEAM_DEFINE_USER_INTERFACE_ACCESSOR( ISteamApps *, SteamApps, STEAMAPPS_INTERFACE_VERSION );
-
-// Global accessor for the gameserver client
-inline ISteamApps *SteamGameServerApps();
-STEAM_DEFINE_GAMESERVER_INTERFACE_ACCESSOR( ISteamApps *, SteamGameServerApps, STEAMAPPS_INTERFACE_VERSION );
 
 // callbacks
 #if defined( VALVE_CALLBACK_PACK_SMALL )
@@ -135,30 +143,6 @@ struct DlcInstalled_t
 {
 	enum { k_iCallback = k_iSteamAppsCallbacks + 5 };
 	AppId_t m_nAppID;		// AppID of the DLC
-};
-
-
-//-----------------------------------------------------------------------------
-// Purpose: possible results when registering an activation code
-//-----------------------------------------------------------------------------
-enum ERegisterActivationCodeResult
-{
-	k_ERegisterActivationCodeResultOK = 0,
-	k_ERegisterActivationCodeResultFail = 1,
-	k_ERegisterActivationCodeResultAlreadyRegistered = 2,
-	k_ERegisterActivationCodeResultTimeout = 3,
-	k_ERegisterActivationCodeAlreadyOwned = 4,
-};
-
-
-//-----------------------------------------------------------------------------
-// Purpose: response to RegisterActivationCode()
-//-----------------------------------------------------------------------------
-struct RegisterActivationCodeResponse_t
-{
-	enum { k_iCallback = k_iSteamAppsCallbacks + 8 };
-	ERegisterActivationCodeResult m_eResult;
-	uint32 m_unPackageRegistered;						// package that was registered. Only set on success
 };
 
 

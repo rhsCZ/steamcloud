@@ -20,6 +20,7 @@ class CsteamcloudApp : public CWinApp
 {
 public:
 	CsteamcloudApp();
+	~CsteamcloudApp();
 
 // Overrides
 public:
@@ -27,9 +28,9 @@ public:
 	virtual int ExitInstance();
 	int error = 0;
 	DWORD errormes = 0;
-	CDialog* m_pDialog = new CDialog;
+	//CDialog* m_pDialog = new CDialog;
 // Implementation
-
+	
 	DECLARE_MESSAGE_MAP()
 };
 

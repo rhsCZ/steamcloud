@@ -18,12 +18,17 @@ CsteamcloudApp::CsteamcloudApp()
 {
 	
 }
+CsteamcloudApp::~CsteamcloudApp()
+{
 
+}
 CsteamcloudApp theApp;
 BOOL CsteamcloudApp::InitInstance()
 {
 	AfxInitRichEdit2();
-	CWinApp::InitInstance();
+	//AfxTermLocalData(NULL, TRUE);
+	//AfxTlsRelease();
+	//CWinApp::InitInstance();
 	//SetErrorMode(0); //only debug
 	/*if (LoadLibraryA("libssl-3.dll") == NULL) //not important for crypto
 	{
@@ -59,7 +64,10 @@ BOOL CsteamcloudApp::InitInstance()
 		
 	}
 	*/
-	
+#ifdef _DEBUG
+	_CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_DEBUG);
+	_CrtDumpMemoryLeaks();
+#endif
 	CsteamcloudDlg dlg;
 	m_pMainWnd = &dlg;
 	//DWORD resultxy;
@@ -97,7 +105,20 @@ BOOL CsteamcloudApp::InitInstance()
 }
 int CsteamcloudApp::ExitInstance()
 {
+
 	CsteamcloudDlg abc;
 	Shell_NotifyIcon(NIM_DELETE, &abc.m_nidIconData);
+#ifdef _WIN64
+	FreeLibrary(GetModuleHandleW(L"steam-api64.dll"));
+#else
+	FreeLibrary(GetModuleHandleW(L"steam_api.dll"));
+#endif
+	
+	
+#ifdef _DEBUG
+	_CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_DEBUG);
+	_CrtDumpMemoryLeaks();
+	
+#endif
 	return 0;
 }

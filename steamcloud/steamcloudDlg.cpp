@@ -33,25 +33,49 @@ void CsteamcloudDlg::GetFiles()
 	int size=0;
 	int32 count = 0;
 	int64 buff=0;
-	count = steam.SteamRemoteStorage()->GetFileCount();
+	count = SteamRemoteStorage()->GetFileCount();
 	for (int i = 0; i < count; i++)
 	{
 		bool existperst=false;
 		wchar_t buf[200] = {};
 		wchar_t mem[500] = {};
-		file = (char*)steam.SteamRemoteStorage()->GetFileNameAndSize(i, &size);
+		file = (char*)SteamRemoteStorage()->GetFileNameAndSize(i, &size);
 		mbstowcs(mem, file, strlen(file));
 		swprintf_s(buf, L"%s", mem);
 		listfiles->InsertItem(i,buf);
-		swprintf_s(buf, L"%d Bytes", size);
+		switch (sizeunit)
+		{
+			case 0:
+			{
+				swprintf_s(buf, L"%d", size);
+				break;
+			}
+			case 1:
+			{
+				float fsize = (float)size / 1024;
+				swprintf_s(buf, L"%.4f", fsize);
+				break;
+			}
+			case 2:
+			{
+				float fsize = (float)size / (1024*1024);
+				swprintf_s(buf, L"%.4f", fsize);
+				break;
+			}
+			default:
+			{
+				swprintf_s(buf, L"%d", size);
+				break;
+			}
+		}
 		listfiles->SetItemText(i, 2, buf);
-		buff=steam.SteamRemoteStorage()->GetFileTimestamp(file);
+		buff=SteamRemoteStorage()->GetFileTimestamp(file);
 		swprintf_s(buf, L"%lli", buff);
 		tm *timeinfo;
 		timeinfo = localtime((time_t*)&buff);
 		wcsftime(buf,sizeof(buf)/2,L"%e.%m.%G %H:%M:%I",timeinfo);
 		listfiles->SetItemText(i, 1, buf);
-		existperst = steam.SteamRemoteStorage()->FileExists(file);
+		existperst = SteamRemoteStorage()->FileExists(file);
 		switch (existperst)
 		{
 			case true:
@@ -65,7 +89,7 @@ void CsteamcloudDlg::GetFiles()
 				break;
 			}
 		}
-		existperst = steam.SteamRemoteStorage()->FilePersisted(file);
+		existperst = SteamRemoteStorage()->FilePersisted(file);
 		switch (existperst)
 		{
 			case true:
@@ -80,9 +104,35 @@ void CsteamcloudDlg::GetFiles()
 			}
 		}
 		uint64 total=0, used=0,available=0;
-		steam.SteamRemoteStorage()->GetQuota(&total, &available);
+		SteamRemoteStorage()->GetQuota(&total, &available);
 		used = total - available;
-		swprintf_s(buf, sizeof(buf)/2, L"%llu/%llu of Bytes used", used, total);
+		switch (sizeunit)
+		{
+			case 0:
+			{
+				swprintf_s(buf, L"%llu/%llu of Bytes used", used, total);
+				break;
+			}
+			case 1:
+			{
+				float fused = (float)used / 1024;
+				float ftotal = (float)total/1024;
+				swprintf_s(buf, L"%.4f/%.4f KB used", fused, ftotal);
+				break;
+			}
+			case 2:
+			{
+				float fused = (float)used / (1024 * 1024);
+				float ftotal = (float)total / (1024*1024);
+				swprintf_s(buf, L"%.4f/%.4f MB used", fused, ftotal);
+				break;
+			}
+			default:
+			{
+				swprintf_s(buf, L"%llu/%llu of Bytes used", used, total);
+				break;
+			}
+		}
 		SetDlgItemTextW(IDC_QUOTA, buf);
 	}
 	
@@ -109,9 +159,9 @@ VOID CALLBACK FileIOCompletionRoutine(
 #pragma warning(disable:4805)
 
 
-#ifdef _DEBUG
-#define new DEBUG_NEW
-#endif
+//#ifdef _DEBUG
+//#define new DEBUG_NEW
+//#endif
 using namespace std;
 
 
@@ -129,6 +179,10 @@ CsteamcloudDlg::CsteamcloudDlg(CWnd* pParent /*=nullptr*/)
 	m_nDefaultMenuItem = 0;
 	m_bMinimizeToTray = TRUE;
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_ICON);
+}
+CsteamcloudDlg::~CsteamcloudDlg()
+{
+	
 }
 
 void CsteamcloudDlg::DoDataExchange(CDataExchange* pDX)
@@ -253,6 +307,9 @@ BEGIN_MESSAGE_MAP(CsteamcloudDlg, CDialog)
 	ON_BN_CLICKED(IDC_DOWNLOAD, &CsteamcloudDlg::OnBnClickedDownload)
 	ON_BN_CLICKED(IDC_REFRESH, &CsteamcloudDlg::OnBnClickedRefresh)
 	ON_BN_CLICKED(IDC_DISCONNECT, &CsteamcloudDlg::OnBnClickedDisconnect)
+	ON_BN_CLICKED(IDC_BYTES, &CsteamcloudDlg::OnBnClickedBytes)
+	ON_BN_CLICKED(IDC_KBYTES, &CsteamcloudDlg::OnBnClickedKbytes)
+	ON_BN_CLICKED(IDC_MBYTES, &CsteamcloudDlg::OnBnClickedMbytes)
 END_MESSAGE_MAP()
 BOOL CsteamcloudDlg::OnNotify(WPARAM wParam, LPARAM lParam, LRESULT* pResult)
 {
@@ -360,21 +417,68 @@ BOOL CsteamcloudDlg::OnInitDialog()
 	
 	if (CsteamcloudDlg::IsWindowVisible() != 0)
 	{
+		
+		exitb = (CButton*)GetDlgItem(IDC_EXIT);
 		checkbox = (CButton*)GetDlgItem(IDC_MINEN);
+		connect = (CButton*)GetDlgItem(IDC_CONNECT);
 		trayen = (CButton*)GetDlgItem(IDC_TRAYEN);
 		download = (CButton*)GetDlgItem(IDC_DOWNLOAD);
 		deletefile = (CButton*)GetDlgItem(IDC_DELETE);
 		upload = (CButton*)GetDlgItem(IDC_UPLOAD);
 		refresh = (CButton*)GetDlgItem(IDC_REFRESH);
 		uploaddir = (CButton*)GetDlgItem(IDC_DIRUPLOAD);
+		disconnect = (CButton*)GetDlgItem(IDC_DISCONNECT);
 		listfiles = (CListCtrl*)GetDlgItem(IDC_LISTFILES);
 		quota = (CStatic*)GetDlgItem(IDC_QUOTA);
+		Bytes = (CButton*)GetDlgItem(IDC_BYTES);
+		Kbytes = (CButton*)GetDlgItem(IDC_KBYTES);
+		Mbytes = (CButton*)GetDlgItem(IDC_MBYTES);
 		disconnect = (CButton*)GetDlgItem(IDC_DISCONNECT);
 		listfiles->InsertColumn(0, L"Filename",LVCFMT_LEFT,120);
 		listfiles->InsertColumn(1, L"TimeStamp", LVCFMT_LEFT, 150);
-		listfiles->InsertColumn(2, L"Size", LVCFMT_LEFT, 100);
+		listfiles->InsertColumn(2, L"Size (B)", LVCFMT_LEFT, 100);
 		listfiles->InsertColumn(3, L"Is Persist", LVCFMT_LEFT, 70);
 		listfiles->InsertColumn(4, L"Exist", LVCFMT_LEFT, 70);
+		/*download->GetClientRect(&buttonrect);
+		buttonrgn.CreateRoundRectRgn(buttonrect.left, buttonrect.top, buttonrect.right, buttonrect.bottom, 22,22);
+		download->SetWindowRgn(buttonrgn, TRUE);
+		buttonrgn.Detach();
+		buttonrgn.DeleteObject();
+		deletefile->GetClientRect(&buttonrect);
+		buttonrgn.CreateRoundRectRgn(buttonrect.left, buttonrect.top, buttonrect.right, buttonrect.bottom, 22, 22);
+		deletefile->SetWindowRgn(buttonrgn, TRUE);
+		buttonrgn.Detach();
+		buttonrgn.DeleteObject();
+		upload->GetClientRect(&buttonrect);
+		buttonrgn.CreateRoundRectRgn(buttonrect.left, buttonrect.top, buttonrect.right, buttonrect.bottom, 22, 22);
+		upload->SetWindowRgn(buttonrgn, TRUE);
+		buttonrgn.Detach();
+		buttonrgn.DeleteObject();
+		uploaddir->GetClientRect(&buttonrect);
+		buttonrgn.CreateRoundRectRgn(buttonrect.left, buttonrect.top, buttonrect.right, buttonrect.bottom, 22, 22);
+		uploaddir->SetWindowRgn(buttonrgn, TRUE);
+		buttonrgn.Detach();
+		buttonrgn.DeleteObject();
+		refresh->GetClientRect(&buttonrect);
+		buttonrgn.CreateRoundRectRgn(buttonrect.left, buttonrect.top, buttonrect.right, buttonrect.bottom, 22, 22);
+		refresh->SetWindowRgn(buttonrgn, TRUE);
+		buttonrgn.Detach();
+		buttonrgn.DeleteObject();
+		connect->GetClientRect(&buttonrect);
+		buttonrgn.CreateRoundRectRgn(buttonrect.left, buttonrect.top, buttonrect.right, buttonrect.bottom, 22, 22);
+		connect->SetWindowRgn(buttonrgn, TRUE);
+		buttonrgn.Detach();
+		buttonrgn.DeleteObject();
+		disconnect->GetClientRect(&buttonrect);
+		buttonrgn.CreateRoundRectRgn(buttonrect.left, buttonrect.top, buttonrect.right, buttonrect.bottom, 22, 22);
+		disconnect->SetWindowRgn(buttonrgn, TRUE);
+		buttonrgn.Detach();
+		buttonrgn.DeleteObject();
+		exitb->GetClientRect(&buttonrect);
+		buttonrgn.CreateRoundRectRgn(buttonrect.left, buttonrect.top, buttonrect.right, buttonrect.bottom, 100, 100);
+		exitb->SetWindowRgn(buttonrgn, TRUE);
+		buttonrgn.Detach();
+		//buttonrgn.DeleteObject();*/ //maybe round buttons on next update
 		download->EnableWindow(0);
 		deletefile->EnableWindow(0);
 		upload->EnableWindow(0);
@@ -382,6 +486,10 @@ BOOL CsteamcloudDlg::OnInitDialog()
 		refresh->EnableWindow(0);
 		quota->ShowWindow(0);
 		disconnect->EnableWindow(0);
+		sizeunit = 0;
+		Bytes->SetCheck(BST_CHECKED);
+		Kbytes->SetCheck(BST_UNCHECKED);
+		Mbytes->SetCheck(BST_UNCHECKED);
 		if (minimizeen)
 		{
 			CheckDlgButton(IDC_MINEN, BST_CHECKED);
@@ -446,7 +554,7 @@ void CsteamcloudDlg::OnBnClickedExit()
 		SteamAPI_Shutdown();
 	}
 	CsteamcloudDlg::OnDestroy();
-	exit(2);
+	PostQuitMessage(1);
 }
 
 void CsteamcloudDlg::OnBnClickedMinEn()
@@ -874,9 +982,13 @@ void CsteamcloudDlg::OnBnClickedConnect()
 		sprintf_s(buf, "%d", appid);
 		SetEnvironmentVariableA("SteamAppID", buf);
 		init = SteamAPI_Init();
+		
 		if (init)
 		{
-			steam.Init();
+			//steam.Init();
+			//steam = SteamClient();
+			//steampipe = SteamClient()->CreateSteamPipe();
+			//steamuser = SteamClient()->ConnectToGlobalUser(steampipe);
 			GetFiles();
 			deletefile->EnableWindow();
 			upload->EnableWindow();
@@ -914,7 +1026,7 @@ void CsteamcloudDlg::OnBnClickedConnect()
 					init = SteamAPI_Init();
 					if (init)
 					{
-						steam.Init();
+						//steam.Init();
 						GetFiles();
 						deletefile->EnableWindow();
 						upload->EnableWindow();
@@ -949,188 +1061,456 @@ void CsteamcloudDlg::OnBnClickedConnect()
 
 void CsteamcloudDlg::OnBnClickedDelete()
 {
-	int mark = listfiles->GetSelectionMark();
-	if (mark != -1)
+	bool filedeleted = false;
+	int files[25] = { -1 };
+	fill_n(files, 25, -1);
+	int count = 0;
+	int mark = -1;
+	POSITION pos = listfiles->GetFirstSelectedItemPosition();
+	if (pos == NULL)
 	{
-		CT2A file(listfiles->GetItemText(mark, 0));
-		steam.SteamRemoteStorage()->FileDelete(file.m_psz);
-		Clearlist();
-		GetFiles();
-		MessageBox(L"File Succesfully deleted!", L"INFO", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
+		MessageBox(L"No file is selected! Please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST); 
+		goto end;
+	}
+	mark = listfiles->GetNextSelectedItem(pos);
+	while (mark != -1)
+	{
+		if (count == 25) break; // break if we've reached the maximum number of selected items
+		files[count] = mark; // save the selected item index
+		count++; // increment the count
+		mark = listfiles->GetNextSelectedItem(pos);
+	}
+	filedeleted = true;
+	for (int i = 0; i < count; i++)
+	{
+		CT2A file(listfiles->GetItemText(files[i], 0));
+		if (SteamRemoteStorage()->FileDelete(file.m_psz) == false)
+		{
+			filedeleted = false;
+		}
+		Sleep(300); // give steam time to process the deletion request
+	}
+	if (!filedeleted)
+	{
+		MessageBox(L"Failed to delete some file/files!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
 	}
 	else
 	{
-		MessageBox(L"No file is selected! Please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		MessageBox(L"File/Files Succesfully deleted!", L"INFO", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
 	}
+	
+end:
+	Clearlist();
+	GetFiles();
 }
-
 
 void CsteamcloudDlg::OnBnClickedUpload()
 {
-	//CHAR szFilter[] = "CSV Files (*.csv)|*.csv|All Files (*.*)|*.*||";
+	bool fileopened[MAX_FILES_COUNT] = { false };
+	bool filesize[MAX_FILES_COUNT] = { false };
+	wchar_t filelist[MAX_FILES_COUNT][MAX_PATH] = { 0 };
+	wchar_t filename[MAX_FILES_COUNT][MAX_PATH] = { 0 };
+	wchar_t dirname[MAX_PATH] = { 0 };
+	int filecount = 0;
+	CString filenames;
+	DWORD maxfiles = 10;
+	fstream file;
+	wchar_t* pFile = nullptr;
 	wchar_t szFilter[] = L"All Files (*.*)|*.*||";
-	CFileDialog dlg(TRUE, NULL, NULL, OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_NONETWORKBUTTON | OFN_PATHMUSTEXIST, szFilter, this);
+	CFileDialog dlg(TRUE, NULL, NULL, OFN_ALLOWMULTISELECT | OFN_EXPLORER | OFN_ALLOWMULTISELECT | OFN_FILEMUSTEXIST | OFN_NONETWORKBUTTON | OFN_PATHMUSTEXIST, szFilter, this);
+	OPENFILENAMEW& ofn = dlg.GetOFN();
+	ofn.lStructSize = sizeof(OPENFILENAMEW);
+	ofn.hwndOwner = this->m_hWnd;
+	//ofn.Flags += OFN_EXPLORER | OFN_ALLOWMULTISELECT | OFN_FILEMUSTEXIST | OFN_NONETWORKBUTTON | OFN_PATHMUSTEXIST;
+	DWORD size = MAX_UNICODE_PATH + (MAX_PATH * MAX_FILES_COUNT);
+	filenames.GetBufferSetLength(size);
+	int len = filenames.GetLength();
+	ofn.lpstrFile = filenames.GetBuffer();
+	ofn.nMaxFile = size;
 	if (dlg.DoModal() == IDOK)
 	{
-		
-		ULONG filesize=0;
-		char *buffer = (char*)malloc(104857600);
-		ZeroMemory(buffer, 104857600);
-		CT2A text(dlg.GetPathName());
-		CT2A text2(dlg.GetFileName());
-		fstream file;
-		HANDLE files = CreateFileA(text.m_psz, GENERIC_READ, NULL, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-		DWORD lasterror = GetLastError();
-		if (GetLastError() == ERROR_FILE_NOT_FOUND)
+		int pos = -1;
+		pos = FindPosition(filenames.GetBuffer(), pos);
+		wcscpy_s(dirname, filenames.GetString());
+		for (UINT i = 0; i < MAX_FILES_COUNT; i++)
 		{
-			MessageBox(L"Unable to open file!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-			goto end;
-		}
-		filesize = GetFileSize(files,NULL);
-		CloseHandle(files);
-		if (filesize > 104857600)
-		{
-			MessageBox(L"File is larger then 100MB!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-			goto end;
-		}
-		file.open(text.m_psz,ios::in|ios::out|ios::binary);
-		if (file.is_open())
-		{
-			file.read(buffer, (ULONG)104857600);
-			if (!steam.SteamRemoteStorage()->FileWrite(text2.m_psz, buffer, (int32)strlen(buffer)))
+			int prevpos = pos;
+			pos = FindPosition(filenames.GetBuffer(), pos);
+			if (pos == prevpos || pos == prevpos + 1 || pos == -1)
 			{
-				MessageBox(L"Unable to upload file!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+				if (i == 0)
+				{
+					filecount++;
+					wcscpy_s(filelist[i], dirname);
+					memset(dirname, 0, sizeof(dirname));
+					sizeof(CString[MAX_PATH]);
+					wcscpy_s(filename[i], dlg.GetFileName().GetString());
+					wcscpy_s(dirname, dlg.GetFolderPath().GetString());
+					Sleep(1);
+				}
+				break;
 			}
-			else
-			{
-				MessageBox(L"File was succesfully uploaded", L"INFO", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
-				Clearlist();
-				GetFiles();
-			}
+			filecount++;			
+			swprintf_s(filelist[i], L"%s\\%s", dirname, &filenames.GetBuffer()[prevpos + 1]);
+			swprintf_s(filename[i], L"%s", &filenames.GetBuffer()[prevpos + 1]);
 		}
-		else
+		ZeroMemory(returned, sizeof(returned));
+		for (int i = 0; i < filecount; i++)
 		{
-			MessageBox(L"Error opening file!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			file.open(filelist[i], ios::in | ios::binary);
+			if (file.is_open())
+			{
+				ULONG length = 0;
+				fileopened[i] = true;
+				file.seekg(0, file.end);
+				length = file.tellg();
+				file.seekg(0, file.beg);
+				if (length >= 102400000)
+				{
+					filesize[i] = false;
+					continue;
+				}
+				filesize[i] = true;
+				vector<std::byte> buffer(length);
+				char filenamex[MAX_FILES_COUNT][MAX_PATH] = { 0 };
+				wcstombs(filenamex[i], filename[i], sizeof(filenamex[i]));
+				file.read(reinterpret_cast<char*>(buffer.data()), length);
+				if (SteamRemoteStorage()->FileWrite(filenamex[i], reinterpret_cast<char*>(buffer.data()), length) == false)
+				{
+					MessageBox(L"Error uploading file!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+				}
+				file.close();
+				Sleep(300);
+			}
 		}
-		end:
-		free(buffer);
 	}
+	Clearlist();
+	GetFiles();
+	Sleep(1);
 }
 
 
 void CsteamcloudDlg::OnBnClickedDirupload()
 {
+	bool emptydir = true;
 	prompt dialog(this);
-	//CHAR szFilter[] = "CSV Files (*.csv)|*.csv|All Files (*.*)|*.*||";
+	bool fileopened[MAX_FILES_COUNT] = {false};
+	bool filesize[MAX_FILES_COUNT] = { false };
+	wchar_t filelist[MAX_FILES_COUNT][MAX_PATH] = { 0 };
+	wchar_t filename[MAX_FILES_COUNT][MAX_PATH] = { 0 };
+	wchar_t dirname[MAX_PATH] = { 0 };
+	wchar_t dirupload[MAX_PATH] = { 0 };
+	int filecount = 0;
+	CString filenames;
+	DWORD maxfiles = 10;
+	fstream file;
+	wchar_t* pFile = nullptr;
 	wchar_t szFilter[] = L"All Files (*.*)|*.*||";
-	CFileDialog dlg(TRUE, NULL, NULL, OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_NONETWORKBUTTON | OFN_PATHMUSTEXIST, szFilter, this);
-	if (dlg.DoModal() == IDOK)
+	CFileDialog dlg(TRUE, NULL, NULL, OFN_ALLOWMULTISELECT | OFN_EXPLORER | OFN_ALLOWMULTISELECT | OFN_FILEMUSTEXIST | OFN_NONETWORKBUTTON | OFN_PATHMUSTEXIST, szFilter, this);
+	OPENFILENAMEW& ofn = dlg.GetOFN();
+	ofn.lStructSize = sizeof(OPENFILENAMEW);
+	ofn.hwndOwner = this->m_hWnd;
+	//ofn.Flags += OFN_EXPLORER | OFN_ALLOWMULTISELECT | OFN_FILEMUSTEXIST | OFN_NONETWORKBUTTON | OFN_PATHMUSTEXIST;
+	DWORD size = MAX_UNICODE_PATH + (MAX_PATH * MAX_FILES_COUNT);
+	filenames.GetBufferSetLength(size);
+	int len = filenames.GetLength();
+	ofn.lpstrFile = filenames.GetBuffer();
+	ofn.nMaxFile = size;
+	
+	if (dialog.DoModal() == IDOK)
 	{
-		ULONG filesize;
-		wchar_t filebuf[500] = {};
-		char filename[500] = {};
-		char* buffer = (char*)malloc(104857600);
-		ZeroMemory(buffer, 104857600);
-		fstream file;
-		CT2A text(dlg.GetPathName());
-		CT2A text2(dlg.GetFileName());
-		ZeroMemory(returned, sizeof(returned));
-		HANDLE files = CreateFileA(text.m_psz, GENERIC_READ, NULL, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-		if (GetLastError() == ERROR_FILE_NOT_FOUND)
+		if (wcscmp(returned, L"") != 0)
 		{
-			MessageBox(L"Unable to open file!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-			goto end;
+			wcscpy_s(dirupload, returned);
+			emptydir = true;
 		}
-		filesize = GetFileSize(files, NULL);
-		CloseHandle(files);
-		if (filesize > (ULONG)104857600)
+		else
 		{
-			MessageBox(L"File is larger then 100MB!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-			goto end;
+			wcscpy_s(dirupload, L"");
+			emptydir = false;
 		}
-		if(dialog.DoModal() == (IDOK||IDCANCEL))
+		if (dlg.DoModal() == IDOK)
 		{
-			if (wcscmp(returned, L""))
+			int pos = -1;
+			pos = FindPosition(filenames.GetBuffer(), pos);
+			wcscpy_s(dirname, filenames.GetString());
+			for (UINT i = 0; i < MAX_FILES_COUNT; i++)
 			{
-				wchar_t temp[300] = {};
-				mbstowcs(temp, text2.m_psz,sizeof(temp)/2);
-				swprintf(filebuf,sizeof(filename)/2, L"%s\\%s", returned, temp);
-				wcstombs(filename, filebuf, sizeof(filename));
-			}
-			else
-			{
-				wchar_t temp[200] = {};
-				mbstowcs(temp, text2.m_psz, sizeof(temp)/2);
-				swprintf(filebuf, sizeof(filename) / 2, L"%s", temp);
-				wcstombs(filename, filebuf, sizeof(filename));
-			}
-			file.open(text.m_psz, ios::in | ios::out | ios::binary);
-			if (file.is_open())
-			{
-				file.read(buffer, 10000);
-				if (!steam.SteamRemoteStorage()->FileWrite(filename, buffer, (int32)strlen(buffer)))
+				int prevpos = pos;
+				pos = FindPosition(filenames.GetBuffer(), pos);
+				if (pos == prevpos || pos == prevpos + 1 || pos == -1)
 				{
-					MessageBox(L"Unable to upload file!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+					if (i == 0)
+					{
+						filecount++;
+						wcscpy_s(filelist[i], dirname);
+						memset(dirname, 0, sizeof(dirname));
+						sizeof(CString[MAX_PATH]);
+						wcscpy_s(filename[i], dlg.GetFileName().GetString());
+						if (emptydir)
+						{
+							swprintf_s(filelist[i], L"%s\\%s", dlg.GetFolderPath().GetString(), dlg.GetFileName().GetString());
+							swprintf_s(filename[i], L"%s/%s", dirupload, filename[i]);
+						}
+						else
+						{
+							wcscpy_s(dirname, dlg.GetFolderPath().GetString());
+						}
+						
+						Sleep(1);
+					}
+					break;
+				}
+				filecount++;
+				if (emptydir)
+				{
+					swprintf_s(filelist[i], L"%s\\%s", dirname, &filenames.GetBuffer()[prevpos + 1]);
+					swprintf_s(filename[i], L"%s/%s", dirupload, &filenames.GetBuffer()[prevpos + 1]);
 				}
 				else
 				{
-					MessageBox(L"File was succesfully uploaded", L"INFO", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
-					Clearlist();
-					GetFiles();
+					swprintf_s(filelist[i], L"%s\\%s", dirname, &filenames.GetBuffer()[prevpos + 1]);
+					swprintf_s(filename[i], L"%s", &filenames.GetBuffer()[prevpos + 1]);
+				}
+					
+			}
+
+			ZeroMemory(returned, sizeof(returned));
+			for (int i = 0; i < filecount; i++)
+			{
+				file.open(filelist[i],ios::in | ios::binary);
+				if (file.is_open())
+				{
+					ULONG length=0;
+					
+					fileopened[i] = true;
+					file.seekg(0, file.end);
+					length = file.tellg();
+					file.seekg(0, file.beg);
+					if (length >= 102400000)
+					{
+						filesize[i] = false;
+						continue;
+					}
+					filesize[i] = true;
+					vector<std::byte> buffer(length);
+					char filenamex[MAX_FILES_COUNT][MAX_PATH] = { 0 };
+					wcstombs(filenamex[i], filename[i], sizeof(filenamex[i]));
+					file.read(reinterpret_cast<char*>(buffer.data()), length);
+					if (SteamRemoteStorage()->FileWrite(filenamex[i], reinterpret_cast<char*>(buffer.data()), length) == false)
+					{
+						MessageBox(L"Error uploading file!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+					}
+					file.close();
+					Sleep(300);
+				}
+			}
+			
+	
+			//if (buffer != nullptr) free(buffer);
+		}
+	}
+	Clearlist();
+	GetFiles();
+	Sleep(1);
+}
+
+void OnSteamCallComplete(RemoteStorageFileWriteAsyncComplete_t _callback, bool _failure)
+{
+
+}
+void CsteamcloudDlg::OnBnClickedDownload()
+{
+	bool fileread = false;
+	bool filewritten = false;
+	bool overwrite = false;
+	bool openfile = false;
+	wchar_t szFilter[] = L"All Files (*.*)|*.*||";
+	wchar_t filename[MAX_FILES_COUNT][MAX_PATH] = { 0 };
+	wchar_t filelist[MAX_FILES_COUNT][MAX_PATH] = { 0 };
+	HANDLE testfile = NULL;
+	fstream file;
+	wchar_t buffer[MAX_PATH] = { 0 };
+	POSITION pos = 0;
+	DWORD size = 102400000;
+	CFileDialog filedialog(FALSE, NULL, NULL, OFN_EXPLORER | OFN_NONETWORKBUTTON | OFN_PATHMUSTEXIST, szFilter, this,sizeof(OPENFILENAMEW));
+	CFolderPickerDialog dialog((LPCTSTR)NULL, OFN_EXPLORER | OFN_NONETWORKBUTTON | OFN_PATHMUSTEXIST | OFN_CREATEPROMPT, this, NULL, FALSE);
+	//CFolderPickerDialog(NULL, );
+	int files[10] = { -1 };
+	fill_n(files, 10, -1);
+	int count = 0;
+	int mark = -1;
+	pos = listfiles->GetFirstSelectedItemPosition();
+	if (pos == NULL)
+	{
+		MessageBox(L"No file is selected! Please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		goto end;
+	}
+	mark = listfiles->GetNextSelectedItem(pos);
+	while (mark != -1)
+	{
+		if (count == 10) break; // break if we've reached the maximum number of selected items
+		files[count] = mark;
+		wcscpy_s(filename[count], listfiles->GetItemText(mark, 0));// save the selected item index
+		count++; // increment the count
+		mark = listfiles->GetNextSelectedItem(pos);
+		
+	}
+	if (count == 1)
+	{
+		wchar_t bufx[MAX_PATH] = { 0 };
+		wcscpy_s(bufx, filename[0]);
+		filedialog.GetOFN().lpstrFile = bufx;
+		if (filedialog.DoModal() != IDOK) goto end;
+		
+	}
+	else
+	{
+		if (dialog.DoModal() != IDOK) goto end;
+	}
+	openfile = true;
+	for (int i = 0; i < count; i++)
+	{
+		if (count == 1)
+		{
+			overwrite = false;
+			openfile = false;
+			swprintf_s(filelist[i], L"%s\\%s", filedialog.GetFolderPath().GetString(), filedialog.GetFileName().GetString());
+			testfile = CreateFile(filelist[i], GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+			if (testfile != INVALID_HANDLE_VALUE)
+			{
+				openfile = true;
+			}
+			CloseHandle(testfile);
+			if (openfile)
+			{
+				if (MessageBox(L"file exist. Do you want to overwrite them?", L"ERROR", MB_YESNO | MB_ICONQUESTION | MB_TOPMOST) == IDYES)
+				{
+					overwrite = true;
+					BOOL res = DeleteFileW(filelist[i]);
+					if (res == 0)
+					{
+						DWORD err = GetLastError();
+						MessageBox(L"Failed to delete the file! Please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+						goto end;
+					}
+				}
+			}
+			testfile = CreateFileW(filelist[i], GENERIC_WRITE, NULL, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+			if (testfile == INVALID_HANDLE_VALUE)
+			{
+				DWORD error = GetLastError();
+				filewritten = false;
+				MessageBox(L"Failed to create the file! Please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+				goto end;
+			}
+			CloseHandle(testfile);
+			file.open(filelist[i], ios::out | ios::binary);
+			if (file.is_open())
+			{
+				CT2A text(filename[i]);
+				size = (size_t)SteamRemoteStorage()->GetFileSize(text.m_psz);
+				vector<std::byte> buffer(size);
+				if (SteamRemoteStorage()->FileRead(text.m_psz, reinterpret_cast<char*>(buffer.data()), (int32)buffer.size()) == 0)
+				{
+					MessageBox(L"Failed to read the file/file not exist in cloud! Please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+					file.close();
+				}
+				file.write(reinterpret_cast<char*>(buffer.data()), buffer.size());
+				file.close();
+			}
+			else
+			{
+				MessageBox(L"Failed to open the file! Please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+				goto end;
+			}
+		}
+		else
+		{
+			swprintf_s(filelist[i], L"%s\\%s", dialog.GetFolderPath().GetString(), filename[i]);
+			testfile = CreateFile(filelist[i], GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+			if (testfile != INVALID_HANDLE_VALUE)
+			{
+				openfile = false;
+			}
+			CloseHandle(testfile);
+		}
+	}
+	overwrite = true;
+	if (!openfile)
+	{
+		if (MessageBox(L"One or more files exist. Do you want to overwrite them?", L"ERROR", MB_YESNO | MB_ICONQUESTION | MB_TOPMOST) == IDYES)
+		{
+			overwrite = true;
+			for (int i = 0; i < count; i++)
+			{
+				testfile = CreateFileW(filelist[i], GENERIC_READ, NULL, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+				if (testfile != INVALID_HANDLE_VALUE)
+				{
+					CloseHandle(testfile);
+					BOOL res = DeleteFileW(filelist[i]);
+					if (res == 0)
+					{
+						DWORD err = GetLastError();
+						MessageBox(L"Failed to delete the file! Please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+						goto end;
+					}
 				}
 			}
 		}
 		else
 		{
-			MessageBox(L"Error opening file!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			overwrite = false;
 		}
-		end:
-		free(buffer);
 	}
-}
-
-
-void CsteamcloudDlg::OnBnClickedDownload()
-{
-	wchar_t szFilter[] = L"All Files (*.*)|*.*||";
-	int mark = listfiles->GetSelectionMark();
-	if(mark != -1)
+	if (overwrite)
 	{ 
-		
-		CT2A textx(listfiles->GetItemText(mark, 0));
-		CFileDialog dlg(FALSE, NULL, listfiles->GetItemText(mark, 0), OFN_EXPLORER | OFN_OVERWRITEPROMPT | OFN_NONETWORKBUTTON | OFN_PATHMUSTEXIST, szFilter, this);
-		if (dlg.DoModal() == IDOK)
+		filewritten = true;
+		fileread = true;
+		for (int i = 0; i < count; i++)
 		{
-
-			char* buffer = (char*)malloc(104857600);
-			ZeroMemory(buffer, 104857600);
-			CT2A text(dlg.GetPathName());
-			HANDLE fil = CreateFile(dlg.GetPathName(), GENERIC_READ | GENERIC_WRITE, NULL, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-			CloseHandle(fil);
-			fstream file;
-			file.open(text.m_psz, ios::in | ios::out, ios::binary);
+			
+			testfile = CreateFileW(filelist[i], GENERIC_WRITE, NULL, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+			if (testfile == INVALID_HANDLE_VALUE)
+			{
+				DWORD error = GetLastError();
+				filewritten = false;
+				continue;
+			}
+			CloseHandle(testfile);
+			file.open(filelist[i], ios::out | ios::binary);
 			if (file.is_open())
 			{
-				
-				if (!steam.SteamRemoteStorage()->FileRead(textx.m_psz, buffer, 104857600))
+				CT2A text(filename[i]);
+				size = (size_t)SteamRemoteStorage()->GetFileSize(text.m_psz);
+				vector<std::byte> buffer(size);
+				int32 size2 = (int32)buffer.size();
+				if (SteamRemoteStorage()->FileRead(text.m_psz, reinterpret_cast<char*>(buffer.data()), size2) == 0)
 				{
-					MessageBox(L"Unable to Download file!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-				}
-				else
-				{
-					file.write(buffer, strlen(buffer));
+					fileread = false;
 					file.close();
-					MessageBox(L"File was succesfully Downloaded", L"INFO", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
+					continue;
 				}
+				file.write(reinterpret_cast<char*>(buffer.data()), buffer.size());
+				file.close();
 			}
 			else
 			{
-				MessageBox(L"Error opening file to write!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+				filewritten = false;
 			}
 		}
-	}
+		if (!filewritten)
+		{
+			MessageBox(L"One or more files failed to save! Please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		}
+		if (!fileread)
+		{
+			MessageBox(L"Failed to read some file/s from cloud/file/s not exist in cloud! Please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		}
+	}	
+end:
+	Sleep(1);
 }
-
 
 void CsteamcloudDlg::OnBnClickedRefresh()
 {
@@ -1141,9 +1521,11 @@ void CsteamcloudDlg::OnBnClickedRefresh()
 
 void CsteamcloudDlg::OnBnClickedDisconnect()
 {
+	SetEnvironmentVariableA("SteamAppID", NULL);
+	//steam.Init();
 	SteamAPI_Shutdown();
+	//steam.Clear();
 	init = false;
-	steam.Clear();
 	download->EnableWindow(0);
 	deletefile->EnableWindow(0);
 	upload->EnableWindow(0);
@@ -1152,4 +1534,55 @@ void CsteamcloudDlg::OnBnClickedDisconnect()
 	quota->ShowWindow(0);
 	disconnect->EnableWindow(0);
 	Clearlist();
+}
+
+
+void CsteamcloudDlg::OnBnClickedBytes()
+{
+	sizeunit = 0;
+	Bytes->SetCheck(BST_CHECKED);
+	Kbytes->SetCheck(BST_UNCHECKED);
+	Mbytes->SetCheck(BST_UNCHECKED);
+	LVCOLUMN col;
+	memset(&col, 0, sizeof(col));
+	col.mask = LVCF_TEXT;
+	listfiles->GetColumn(2, &col);
+	col.pszText = L"Size (B)";
+	listfiles->SetColumn(2, &col);
+	Clearlist();
+	GetFiles();
+}
+
+
+void CsteamcloudDlg::OnBnClickedKbytes()
+{
+	sizeunit = 1;
+	Bytes->SetCheck(BST_UNCHECKED);
+	Kbytes->SetCheck(BST_CHECKED);
+	Mbytes->SetCheck(BST_UNCHECKED);
+	LVCOLUMN col;
+	memset(&col, 0, sizeof(col));
+	col.mask = LVCF_TEXT;
+	listfiles->GetColumn(2, &col);
+	col.pszText = L"Size (KB)";
+	listfiles->SetColumn(2, &col);
+	Clearlist();
+	GetFiles();
+}
+
+
+void CsteamcloudDlg::OnBnClickedMbytes()
+{
+	sizeunit = 2;
+	Bytes->SetCheck(BST_UNCHECKED);
+	Kbytes->SetCheck(BST_UNCHECKED);
+	Mbytes->SetCheck(BST_CHECKED);
+	LVCOLUMN col;
+	memset(&col, 0, sizeof(col));
+	col.mask = LVCF_TEXT;
+	listfiles->GetColumn(2, &col);
+	col.pszText = L"Size (MB)";
+	listfiles->SetColumn(2, &col);
+	Clearlist();
+	GetFiles();
 }
