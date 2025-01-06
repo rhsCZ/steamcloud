@@ -1249,8 +1249,10 @@ void CsteamcloudDlg::OnBnClickedDirupload()
 						wcscpy_s(filename[i], dlg.GetFileName().GetString());
 						if (emptydir)
 						{
+							wstring tmpbuf; 
+							tmpbuf = filename[i];
 							swprintf_s(filelist[i], L"%s\\%s", dlg.GetFolderPath().GetString(), dlg.GetFileName().GetString());
-							swprintf_s(filename[i], L"%s/%s", dirupload, filename[i]);
+							swprintf_s(filename[i], L"%s/%s", dirupload, tmpbuf.c_str());
 						}
 						else
 						{
