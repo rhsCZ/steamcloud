@@ -10,7 +10,7 @@
 #define IDC_MINEN                       1001
 #define IDC_LISTFILES                   1002
 #define IDC_CONNECT                     1003
-#define IDC_APPID                       1004
+#define IDC_INPUTAPPID                  1004
 #define IDC_DELETE                      1005
 #define IDC_UPLOAD                      1006
 #define IDC_DIRUPLOAD                   1007

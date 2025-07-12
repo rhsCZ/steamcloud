@@ -12,11 +12,7 @@
 //#include <thread>
 #include <fstream>
 #include <Windows.h>
-template<class TYPE>
-bool RegSetKey(HKEY key, LPSTR keyloc, unsigned long type, REGSAM access, LPSTR name, TYPE indatax);
-int RegCrtKey(HKEY key, LPSTR keyloc, REGSAM access);
-template<class TYPE>
-int RegGetKey(HKEY key, LPSTR keyloc, unsigned long type, REGSAM access, LPSTR name, TYPE outdatax);
+
 DWORD g_BytesTransferred = 0;
 void CsteamcloudDlg::Clearlist()
 {
@@ -189,103 +185,7 @@ void CsteamcloudDlg::DoDataExchange(CDataExchange* pDX)
 {
 	CDialog::DoDataExchange(pDX);
 }
-template<class TYPE>
-bool RegSetKey(HKEY key,LPSTR keyloc,unsigned long type, REGSAM access,LPSTR name,TYPE indatax)
-{
-	unsigned long size = sizeof(type);
-	char errorbuf[200];
-	HKEY keyval;
-	bool onerr = 1;
-	int err;
-	err = RegOpenKeyExA(key, keyloc, NULL, access, &keyval);
-	if (err != ERROR_SUCCESS)
-	{
-		sprintf_s(errorbuf, "%i\n", err);
-		onerr = 0;
-		ASSERT(errorbuf);
-	} else if(err == ERROR_SUCCESS)
-	{ 
-		err = RegSetValueExA(keyval, name, NULL, type, (BYTE*)indatax, size);
-		if (err != ERROR_SUCCESS)
-		{
-			sprintf_s(errorbuf, "%i\n", err);
-			onerr = 0;
-			ASSERT(errorbuf);
-		}
-	}
-	
-		CloseHandle(keyval);
-	return onerr;
-}
-int RegCrtKey(HKEY key, LPSTR keyloc, REGSAM access)
-{
-	HKEY keyval;
-	int err;
-	char errorbuf[200];
-	DWORD dispvalue;
-	err = RegCreateKeyExA(key, keyloc, NULL, NULL, REG_OPTION_NON_VOLATILE, access,NULL, &keyval, &dispvalue);
-	CloseHandle(keyval);
-	if (err == ERROR_SUCCESS)
-	{
-		if (dispvalue == REG_CREATED_NEW_KEY)
-		{
-			return 1;
-		}
-		else
-		{
-			return 2;
-		}
-	}
-	else
-	{
-		sprintf_s(errorbuf, "%i\n", err);
-		ASSERT(errorbuf);
-		return 0;
-	}
-	//return onerr;
-}
-template<class TYPE>
-int RegGetKey(HKEY key, LPSTR keyloc, unsigned long type, REGSAM access, LPSTR name, TYPE outdatax)
-{
-	unsigned long size = sizeof(type);
-	char errorbuf[200];
-	HKEY keyval;
-	int onerr = 0;
-	int err;
-	err = RegOpenKeyExA(key, keyloc, NULL, access, &keyval);
-	if (err != ERROR_SUCCESS)
-	{
-		onerr = false;
-	}
-	err = RegQueryValueExA(keyval, name, NULL, &type, (BYTE*)outdatax, &size);
-	switch (err)
-	{
-	case ERROR_FILE_NOT_FOUND:
-	{
-		onerr = 2;
-		break;
-	} 
-	case ERROR_MORE_DATA:
-	{
-		onerr = 3;
-		break;
-	}
-	case ERROR_SUCCESS:
-	{
-		onerr = 1;
-		break;
-	}
-	default:
-	{
-		sprintf_s(errorbuf, "%i\n", err);
-		ASSERT(errorbuf);
-		onerr = 0;
-		break;
-	}
-	}
-		CloseHandle(keyval);
-	return onerr;
-}
+
 
 BEGIN_MESSAGE_MAP(CsteamcloudDlg, CDialog)
 	ON_WM_PAINT()
@@ -310,6 +210,8 @@ BEGIN_MESSAGE_MAP(CsteamcloudDlg, CDialog)
 	ON_BN_CLICKED(IDC_BYTES, &CsteamcloudDlg::OnBnClickedBytes)
 	ON_BN_CLICKED(IDC_KBYTES, &CsteamcloudDlg::OnBnClickedKbytes)
 	ON_BN_CLICKED(IDC_MBYTES, &CsteamcloudDlg::OnBnClickedMbytes)
+//	ON_BN_CLICKED(IDC_TESTSAVE, &CsteamcloudDlg::OnBnClickedTestsave)
+//	ON_BN_CLICKED(IDC_TESTREAD, &CsteamcloudDlg::OnBnClickedTestread)
 END_MESSAGE_MAP()
 BOOL CsteamcloudDlg::OnNotify(WPARAM wParam, LPARAM lParam, LRESULT* pResult)
 {
@@ -357,8 +259,11 @@ BOOL CsteamcloudDlg::OnInitDialog()
 	out = RegCrtKey(HKEY_CURRENT_USER, "Software\\steamcloud", KEY_ALL_ACCESS | KEY_WOW64_64KEY);
 	if (out == 1)
 	{
-		RegSetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "TrayEnable", &indata);
-		RegSetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "TrayMinimize", &indata);
+		RegSetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "TrayEnable", indata);
+		RegSetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "TrayMinimize", indata);
+		indata = 0;
+		RegSetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "SizeUnit", indata);
+		indata = 1;
 	}
 	else if(out == 0)
 	{
@@ -368,11 +273,11 @@ BOOL CsteamcloudDlg::OnInitDialog()
 	}
 	else if (out == 2)
 	{
-		out = RegGetKey(HKEY_CURRENT_USER, "Software\\steamcloud", NULL, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "TrayMinimize", &outdata);
+		out = RegGetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "TrayMinimize", outdata);
 		if (out == 2)
 		{
 			
-			RegSetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "TrayMinimize", &indata);
+			RegSetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "TrayMinimize", indata);
 			
 			minimizeen = 1;
 			m_bMinimizeToTray = TRUE;
@@ -390,11 +295,11 @@ BOOL CsteamcloudDlg::OnInitDialog()
 				m_bMinimizeToTray = FALSE;
 			}
 		}
-		out = RegGetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "TrayEnable", &outdata);
+		out = RegGetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "TrayEnable", outdata);
 		if (out == 2)
 		{
 
-			RegSetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "TrayMinimize", &indata);
+			RegSetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "TrayEnable", indata);
 			trayenable = 1;
 		}
 		else if (out == 1)
@@ -408,6 +313,17 @@ BOOL CsteamcloudDlg::OnInitDialog()
 				trayenable = 0;
 			}
 		}
+		out = RegGetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "SizeUnit", outdata);
+		if (out == 2)
+		{
+			indata = 0;
+			RegSetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "SizeUnit", indata);
+			sizeunit = 0;
+		}
+		else if (out == 1)
+		{
+			sizeunit = outdata;
+		}
 	}
 	SetIcon(m_hIcon, TRUE);			// Set big icon
 	SetIcon(m_hIcon, FALSE);		// Set small icon
@@ -417,7 +333,9 @@ BOOL CsteamcloudDlg::OnInitDialog()
 	
 	if (CsteamcloudDlg::IsWindowVisible() != 0)
 	{
-		
+#ifdef _DEBUG
+		//AllocConsole();
+#endif
 		exitb = (CButton*)GetDlgItem(IDC_EXIT);
 		checkbox = (CButton*)GetDlgItem(IDC_MINEN);
 		connect = (CButton*)GetDlgItem(IDC_CONNECT);
@@ -434,6 +352,7 @@ BOOL CsteamcloudDlg::OnInitDialog()
 		Kbytes = (CButton*)GetDlgItem(IDC_KBYTES);
 		Mbytes = (CButton*)GetDlgItem(IDC_MBYTES);
 		disconnect = (CButton*)GetDlgItem(IDC_DISCONNECT);
+		inputappid = (CComboBox*)GetDlgItem(IDC_INPUTAPPID);
 		listfiles->InsertColumn(0, L"Filename",LVCFMT_LEFT,120);
 		listfiles->InsertColumn(1, L"TimeStamp", LVCFMT_LEFT, 150);
 		listfiles->InsertColumn(2, L"Size (B)", LVCFMT_LEFT, 100);
@@ -486,10 +405,6 @@ BOOL CsteamcloudDlg::OnInitDialog()
 		refresh->EnableWindow(0);
 		quota->ShowWindow(0);
 		disconnect->EnableWindow(0);
-		sizeunit = 0;
-		Bytes->SetCheck(BST_CHECKED);
-		Kbytes->SetCheck(BST_UNCHECKED);
-		Mbytes->SetCheck(BST_UNCHECKED);
 		if (minimizeen)
 		{
 			CheckDlgButton(IDC_MINEN, BST_CHECKED);
@@ -508,7 +423,39 @@ BOOL CsteamcloudDlg::OnInitDialog()
 			CheckDlgButton(IDC_TRAYEN, BST_UNCHECKED);
 			TrayHide();
 		}
-		
+		switch (sizeunit)
+		{
+		case 0:
+		{
+			Bytes->SetCheck(BST_CHECKED);
+			Kbytes->SetCheck(BST_UNCHECKED);
+			Mbytes->SetCheck(BST_UNCHECKED);
+			break;
+		}
+		case 1:
+		{
+			Bytes->SetCheck(BST_UNCHECKED);
+			Kbytes->SetCheck(BST_CHECKED);
+			Mbytes->SetCheck(BST_UNCHECKED);
+			break;
+		}
+		case 2:
+		{
+			Bytes->SetCheck(BST_UNCHECKED);
+			Kbytes->SetCheck(BST_UNCHECKED);
+			Mbytes->SetCheck(BST_CHECKED);
+			break;
+		}
+		default:
+		{
+			sizeunit = 0;
+			Bytes->SetCheck(BST_CHECKED);
+			Kbytes->SetCheck(BST_UNCHECKED);
+			Mbytes->SetCheck(BST_UNCHECKED);
+			break;
+		}
+		}
+		LoadComboBoxHistory();
 	}
 	
 	return TRUE;
@@ -564,14 +511,14 @@ void CsteamcloudDlg::OnBnClickedMinEn()
 	if (boxcheck == BST_CHECKED)
 	{
 		indata = 1;
-		RegSetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "TrayMinimize", &indata);
+		RegSetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "TrayMinimize", indata);
 		m_bMinimizeToTray = TRUE;
 		minimizeen = true;
 	}
 	else
 	{
 		indata = 0;
-		RegSetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "TrayMinimize", &indata);
+		RegSetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "TrayMinimize", indata);
 		m_bMinimizeToTray = FALSE;
 		minimizeen = false;
 	}
@@ -584,7 +531,7 @@ void CsteamcloudDlg::OnBnClickedTrayEn()
 	if (tren == BST_CHECKED)
 	{
 		indata = 1;
-		RegSetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "TrayEnable", &indata);
+		RegSetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "TrayEnable", indata);
 		trayenable = true;
 		checkbox->EnableWindow();
 		TrayShow();
@@ -592,7 +539,7 @@ void CsteamcloudDlg::OnBnClickedTrayEn()
 	else
 	{
 		indata = 0;
-		RegSetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "TrayEnable", &indata);
+		RegSetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "TrayEnable", indata);
 		trayenable = false;
 		m_bMinimizeToTray = FALSE;
 		checkbox->EnableWindow(0);
@@ -955,7 +902,22 @@ PCHAR* CsteamcloudDlg::CommandLineToArgvA(PCHAR CmdLine,int* _argc)
 	(*_argc) = argc;
 	return argv;
 }
+/*
 
+CString cstr;
+	inputappid->GetWindowTextW(cstr);
+	for (size_t i = 0; i < cstr.GetLength(); ++i)
+	{
+		if (!isdigit(cstr[i]))
+		{
+			//AfxMessageBox(_T("Zadejte pouze čísla."));
+			MessageBox(L"Please enter only numbers!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			return;
+		}
+	}
+	UpdateAppIdHistoryFromInput();
+	SaveComboBoxHistory();
+*/
 void CsteamcloudDlg::OnBnClickedConnect()
 {
 	Clearlist();
@@ -965,59 +927,74 @@ void CsteamcloudDlg::OnBnClickedConnect()
 		init = false;
 	}
 	bool closed = false;
-	int appid=-1;
-	appid = GetDlgItemInt(IDC_APPID);
+
+	CString appidStr;
+	inputappid->GetWindowTextW(appidStr);
+
+	// Odebrání mezer a kontrola, že je neprázdné
+	appidStr.Trim();
+	if (appidStr.IsEmpty())
+	{
+		MessageBox(L"App ID is empty, please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		return;
+	}
+
+	// Kontrola, zda je pouze číselné
+	for (int i = 0; i < appidStr.GetLength(); ++i)
+	{
+		if (!isdigit(appidStr[i]))
+		{
+			MessageBox(L"App ID must be a number!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			return;
+		}
+	}
+
+	int appid = _wtoi(appidStr);
 	if (appid < 1)
 	{
-		MessageBox( L"App ID is empty or negative number, please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		MessageBox(L"App ID must be greater than 0!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		return;
+	}
+
+	int argc = 0;
+	PCHAR* argv;
+	char dir[500] = {}, file[500] = {};
+	char drive[5], dirs[500], x[30];
+	char buf[150] = {}, check[150] = {};
+	sprintf_s(buf, "%d", appid);
+	SetEnvironmentVariableA("SteamAppID", buf);
+	init = SteamAPI_Init();
+
+	if (init)
+	{
+		UpdateAppIdHistoryFromInput();
+		SaveComboBoxHistory();
+		GetFiles();
+		deletefile->EnableWindow();
+		upload->EnableWindow();
+		uploaddir->EnableWindow();
+		download->EnableWindow();
+		refresh->EnableWindow();
+		quota->ShowWindow(1);
+		disconnect->EnableWindow();
 	}
 	else
 	{
-		
-		int argc=0;
-		PCHAR* argv;
-		char dir[500] = {}, file[500] = {};
-		char drive[5], dirs[500],x[30];
-		char buf[150] = {}, check[150] = {};
-		sprintf_s(buf, "%d", appid);
-		SetEnvironmentVariableA("SteamAppID", buf);
-		init = SteamAPI_Init();
-		
-		if (init)
-		{
-			//steam.Init();
-			//steam = SteamClient();
-			//steampipe = SteamClient()->CreateSteamPipe();
-			//steamuser = SteamClient()->ConnectToGlobalUser(steampipe);
-			GetFiles();
-			deletefile->EnableWindow();
-			upload->EnableWindow();
-			uploaddir->EnableWindow();
-			download->EnableWindow();
-			refresh->EnableWindow();
-			quota->ShowWindow(1);
-			disconnect->EnableWindow();
-
-		}
-		else
-		{ 
-
 		argv = CommandLineToArgvA(GetCommandLineA(), &argc);
-		_splitpath_s(argv[0], drive, dirs,x,x);
-		
+		_splitpath_s(argv[0], drive, dirs, x, x);
+
 		sprintf_s(dir, "%s%s", drive, dirs);
 		sprintf_s(file, "%ssteam_appid.txt", dir);
 		HANDLE fileapp;
-		fileapp = CreateFileA(file, GENERIC_READ | GENERIC_WRITE,0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+		fileapp = CreateFileA(file, GENERIC_READ | GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 		if (fileapp != INVALID_HANDLE_VALUE)
 		{
-			OVERLAPPED ol = {0};
-			
-			
+			OVERLAPPED ol = { 0 };
+
 			WriteFile(fileapp, &buf, (ULONG)strlen(buf), NULL, NULL);
 			Sleep(300);
-			if(ReadFileEx(fileapp, check,150,&ol, FileIOCompletionRoutine) != FALSE)
-			{ 
+			if (ReadFileEx(fileapp, check, 150, &ol, FileIOCompletionRoutine) != FALSE)
+			{
 				Sleep(300);
 
 				if (!strcmp(buf, check))
@@ -1026,7 +1003,6 @@ void CsteamcloudDlg::OnBnClickedConnect()
 					init = SteamAPI_Init();
 					if (init)
 					{
-						//steam.Init();
 						GetFiles();
 						deletefile->EnableWindow();
 						upload->EnableWindow();
@@ -1036,7 +1012,6 @@ void CsteamcloudDlg::OnBnClickedConnect()
 						quota->ShowWindow(1);
 						disconnect->EnableWindow();
 					}
-
 				}
 				else
 				{
@@ -1045,7 +1020,7 @@ void CsteamcloudDlg::OnBnClickedConnect()
 			}
 			else
 			{
-				MessageBox( L"Error READ FILE!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+				MessageBox(L"Error READ FILE!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
 			}
 			if (!closed) { CloseHandle(fileapp); closed = true; }
 		}
@@ -1053,10 +1028,9 @@ void CsteamcloudDlg::OnBnClickedConnect()
 		{
 			MessageBox(L"Error opening file!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
 		}
-		}
 	}
-	
 }
+
 
 
 void CsteamcloudDlg::OnBnClickedDelete()
@@ -1317,10 +1291,11 @@ void CsteamcloudDlg::OnBnClickedDirupload()
 	Sleep(1);
 }
 
-void OnSteamCallComplete(RemoteStorageFileWriteAsyncComplete_t _callback, bool _failure)
+/*void OnSteamCallComplete(RemoteStorageFileWriteAsyncComplete_t _callback, bool _failure)
 {
 
 }
+*/
 void CsteamcloudDlg::OnBnClickedDownload()
 {
 	bool fileread = false;
@@ -1542,49 +1517,292 @@ void CsteamcloudDlg::OnBnClickedDisconnect()
 void CsteamcloudDlg::OnBnClickedBytes()
 {
 	sizeunit = 0;
+	RegSetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "SizeUnit", sizeunit);
 	Bytes->SetCheck(BST_CHECKED);
 	Kbytes->SetCheck(BST_UNCHECKED);
 	Mbytes->SetCheck(BST_UNCHECKED);
-	LVCOLUMN col;
-	memset(&col, 0, sizeof(col));
-	col.mask = LVCF_TEXT;
-	listfiles->GetColumn(2, &col);
-	col.pszText = L"Size (B)";
-	listfiles->SetColumn(2, &col);
-	Clearlist();
-	GetFiles();
+	if(init)
+	{
+		LVCOLUMN col;
+		memset(&col, 0, sizeof(col));
+		col.mask = LVCF_TEXT;
+		listfiles->GetColumn(2, &col);
+		col.pszText = L"Size (B)";
+		listfiles->SetColumn(2, &col);
+		Clearlist();
+		GetFiles();
+	}
+	
 }
 
 
 void CsteamcloudDlg::OnBnClickedKbytes()
 {
 	sizeunit = 1;
+	RegSetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "SizeUnit", sizeunit);
 	Bytes->SetCheck(BST_UNCHECKED);
 	Kbytes->SetCheck(BST_CHECKED);
 	Mbytes->SetCheck(BST_UNCHECKED);
-	LVCOLUMN col;
-	memset(&col, 0, sizeof(col));
-	col.mask = LVCF_TEXT;
-	listfiles->GetColumn(2, &col);
-	col.pszText = L"Size (KB)";
-	listfiles->SetColumn(2, &col);
-	Clearlist();
-	GetFiles();
+	if (init)
+	{
+		LVCOLUMN col;
+		memset(&col, 0, sizeof(col));
+		col.mask = LVCF_TEXT;
+		listfiles->GetColumn(2, &col);
+		col.pszText = L"Size (KB)";
+		listfiles->SetColumn(2, &col);
+		Clearlist();
+		GetFiles();
+	}
 }
 
 
 void CsteamcloudDlg::OnBnClickedMbytes()
 {
 	sizeunit = 2;
+	RegSetKey(HKEY_CURRENT_USER, "Software\\steamcloud", REG_DWORD, KEY_ALL_ACCESS | KEY_WOW64_64KEY, "SizeUnit", sizeunit);
 	Bytes->SetCheck(BST_UNCHECKED);
 	Kbytes->SetCheck(BST_UNCHECKED);
 	Mbytes->SetCheck(BST_CHECKED);
-	LVCOLUMN col;
-	memset(&col, 0, sizeof(col));
-	col.mask = LVCF_TEXT;
-	listfiles->GetColumn(2, &col);
-	col.pszText = L"Size (MB)";
-	listfiles->SetColumn(2, &col);
-	Clearlist();
-	GetFiles();
+	if (init)
+	{
+		LVCOLUMN col;
+		memset(&col, 0, sizeof(col));
+		col.mask = LVCF_TEXT;
+		listfiles->GetColumn(2, &col);
+		col.pszText = L"Size (MB)";
+		listfiles->SetColumn(2, &col);
+		Clearlist();
+		GetFiles();
+	}
 }
+
+//void CsteamcloudDlg::OnBnClickedTestsave()
+//{
+//	CString cstr;
+//	inputappid->GetWindowTextW(cstr);
+//	for (size_t i = 0; i < cstr.GetLength(); ++i)
+//	{
+//		if (!isdigit(cstr[i]))
+//		{
+			//AfxMessageBox(_T("Zadejte pouze čísla."));
+//			MessageBox(L"Please enter only numbers!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+//			return;
+//		}
+//	}
+//	UpdateAppIdHistoryFromInput();
+//	SaveComboBoxHistory();
+//}
+
+//void CsteamcloudDlg::OnBnClickedTestread()
+//{
+//	CString cstr;
+//	inputappid->GetWindowTextW(cstr);
+//	CString msg;
+//	msg.Format(L"Entered number: %s", (LPCTSTR)cstr);
+//	MessageBox(msg, L"Success", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
+//}
+
+void CsteamcloudDlg::LoadComboBoxHistory()
+{
+	const char* keyPath = "Software\\steamcloud";
+	char appList[64] = { 0 };
+	m_appidList.clear();
+	m_appidList_orig.clear();
+	m_appidMap.clear();
+
+	int ret = RegGetKey(HKEY_CURRENT_USER, (LPSTR)keyPath, REG_SZ, KEY_QUERY_VALUE, "AppList", appList);
+	if (ret != 1)
+		return;
+
+	size_t len = strlen(appList);
+
+	for (size_t i = 0; i < len; ++i)
+	{
+		char regName[2] = { appList[i], 0 };
+		char value[256] = { 0 };
+
+		if (RegGetKey(HKEY_CURRENT_USER, (LPSTR)keyPath, REG_SZ, KEY_QUERY_VALUE, regName, value) == 1)
+		{
+			CString str = CA2W(value);
+			m_appidMap[appList[i]] = str;
+		}
+	}
+
+	// Vytvořit m_appidList podle pořadí z AppList, kde první je nejnovější
+	m_appidList.clear();
+	for (size_t i = 0; i < len; ++i)
+	{
+		m_appidList.push_back(m_appidMap[appList[i]]);
+	}
+
+	// Zrcadlíme originál
+	m_appidList_orig = m_appidList;
+	m_appList_keyOrder = appList;
+
+	// Naplníme combobox (nejnovější nahoře)
+	inputappid->ResetContent();
+	for (const CString& val : m_appidList)
+		inputappid->AddString(val);
+
+	return;
+}
+void CsteamcloudDlg::UpdateAppIdHistoryFromInput()
+{
+	CString cstr;
+	inputappid->GetWindowTextW(cstr);
+	if (cstr.IsEmpty())
+		return;
+
+	// Odeber starý výskyt hodnoty, pokud existuje
+	auto it = std::find(m_appidList.begin(), m_appidList.end(), cstr);
+	if (it != m_appidList.end())
+		m_appidList.erase(it);
+
+	// Přidej hodnotu na začátek (nejnovější)
+	m_appidList.insert(m_appidList.begin(), cstr);
+
+	// Pokud máme více než 10, zapamatuj si nejstarší
+	CString removedValue;
+	if (m_appidList.size() > 10)
+	{
+		removedValue = m_appidList.back();
+		m_appidList.pop_back();
+	}
+
+	// Pokud keyOrder není plný, inicializuj
+	if (m_appList_keyOrder.size() < 10)
+		m_appList_keyOrder = "abcdefghij";
+
+	std::map<char, CString> newMap;
+	std::set<char> usedKeys;
+
+	// Zachováme staré mapování kromě odstraněné hodnoty
+	for (const auto& [key, val] : m_appidMap)
+	{
+		if (val != removedValue)
+			newMap[key] = val;
+	}
+
+	// Najdeme dostupné znaky podle původního pořadí
+	std::vector<char> availableKeys;
+	for (char ch : m_appList_keyOrder)
+	{
+		if (newMap.find(ch) == newMap.end())
+			availableKeys.push_back(ch);
+	}
+
+	// Přiřadíme nové hodnoty do mapy
+	for (const CString& val : m_appidList)
+	{
+		bool exists = false;
+		for (const auto& [key, strVal] : newMap)
+		{
+			if (strVal == val)
+			{
+				usedKeys.insert(key);
+				exists = true;
+				break;
+			}
+		}
+		if (!exists && !availableKeys.empty())
+		{
+			char newKey = availableKeys.front();
+			availableKeys.erase(availableKeys.begin());
+			newMap[newKey] = val;
+			usedKeys.insert(newKey);
+		}
+	}
+
+	m_appidMap = std::move(newMap);
+
+	// Vytvoříme nový m_appList_keyOrder: pro každý prvek v m_appidList najdi jeho klíč a přidej (nejnovější první)
+	std::string newOrder;
+	for (const auto& val : m_appidList)
+	{
+		for (const auto& [key, mappedVal] : m_appidMap)
+		{
+			if (mappedVal == val)
+			{
+				newOrder += key;
+				break;
+			}
+		}
+	}
+
+	m_appList_keyOrder = newOrder;
+
+	// Obnovíme combobox (nejnovější nahoře)
+	inputappid->ResetContent();
+	for (const auto& val : m_appidList)
+		inputappid->AddString(val);
+	inputappid->SetCurSel(0);
+}
+
+
+
+void CsteamcloudDlg::SaveComboBoxHistory()
+{
+	const char* keyPath = "Software\\steamcloud";
+	const char* keyNames = "abcdefghij";
+
+	// Pokud se seznam nezměnil, není potřeba nic dělat
+	if (m_appidList == m_appidList_orig)
+		return;
+
+	const size_t count = min(m_appidList.size(), 10);
+	std::string appList;
+
+	// Vytvoření AppList od nejnovější (první v m_appidList) po nejstarší (poslední)
+	// Ale zapisujeme pozpátku, abychom měli AppList ve formátu: jihgfedcba
+	for (auto it = m_appidList.begin(); it != m_appidList.end(); ++it)
+	{
+		const CString& val = *it;
+		char foundChar = 0;
+
+		// Najít, jestli už je hodnota v mapě
+		for (auto& [keyChar, strVal] : m_appidMap)
+		{
+			if (strVal == val)
+			{
+				foundChar = keyChar;
+				break;
+			}
+		}
+
+		// Pokud není, přiřadíme nové písmeno (nejstarší z původního pořadí)
+		if (foundChar == 0)
+		{
+			if (!m_appList_keyOrder.empty())
+			{
+				foundChar = m_appList_keyOrder.back();
+				m_appList_keyOrder.pop_back();
+			}
+			else
+			{
+				// fallback pokud by klíčový řetězec byl prázdný
+				foundChar = keyNames[appList.size()];
+			}
+
+			m_appidMap[foundChar] = val;
+		}
+
+		appList.push_back(foundChar);
+	}
+
+	// Uložit hodnoty podle mapy
+	for (const auto& [keyChar, val] : m_appidMap)
+	{
+		char regName[2] = { keyChar, 0 };
+		std::string strVal = CT2A(val);
+		RegSetKey(HKEY_CURRENT_USER, (LPSTR)keyPath, REG_SZ, KEY_SET_VALUE, regName, strVal);
+	}
+
+	// Uložit AppList (např. jihgfedcba)
+	RegSetKey(HKEY_CURRENT_USER, (LPSTR)keyPath, REG_SZ, KEY_SET_VALUE, (LPSTR)"AppList", appList);
+
+	// Aktualizace originálu
+	m_appidList_orig = m_appidList;
+	m_appList_keyOrder = appList;
+}
+

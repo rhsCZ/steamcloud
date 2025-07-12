@@ -108,12 +108,12 @@ int CsteamcloudApp::ExitInstance()
 
 	CsteamcloudDlg abc;
 	Shell_NotifyIcon(NIM_DELETE, &abc.m_nidIconData);
-#ifdef _WIN64
+/*#ifdef _WIN64
 	FreeLibrary(GetModuleHandleW(L"steam-api64.dll"));
 #else
 	FreeLibrary(GetModuleHandleW(L"steam_api.dll"));
 #endif
-	
+*/
 	
 #ifdef _DEBUG
 	_CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_DEBUG);
