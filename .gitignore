@@ -14,3 +14,4 @@ steamcloud/steamcloud.aps
 /steam-worker.exe
 /steamcloud/steam_x64.aps
 /steamcloud/steam_x86.aps
+*.aps
