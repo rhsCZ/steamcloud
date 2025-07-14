@@ -32,10 +32,10 @@ bool CsteamcloudDlg::ReadFromPipeWithTimeout(DWORD timeoutMs, std::string& outpu
 	while (GetTickCount64() - startTime < timeoutMs)
 	{
 		DWORD bytesAvailable = 0;
-		if (PeekNamedPipe(m_hPipe, NULL, 0, NULL, &bytesAvailable, NULL) && bytesAvailable > 0)
+		if (PeekNamedPipe(m_hResponsePipe, NULL, 0, NULL, &bytesAvailable, NULL) && bytesAvailable > 0)
 		{
 			DWORD bytesRead = 0;
-			if (ReadFile(m_hPipe, buffer, sizeof(buffer) - 1, &bytesRead, NULL) && bytesRead > 0)
+			if (ReadFile(m_hResponsePipe, buffer, sizeof(buffer) - 1, &bytesRead, NULL) && bytesRead > 0)
 			{
 				buffer[bytesRead] = '\0';
 				output = buffer;
@@ -48,11 +48,13 @@ bool CsteamcloudDlg::ReadFromPipeWithTimeout(DWORD timeoutMs, std::string& outpu
 }
 void CsteamcloudDlg::GetFiles()
 {
-	if (!m_hPipe || m_hPipe == INVALID_HANDLE_VALUE) {
+	pipeblocked = true;
+	if (!m_hResponsePipe || m_hResponsePipe == INVALID_HANDLE_VALUE) {
 		MessageBox(L"Pipe's not open.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false;
 		return;
 	}
-
+	bool empty = false;
 	Clearlist();
 	m_fileSizesBytes.clear();
 	
@@ -60,14 +62,16 @@ void CsteamcloudDlg::GetFiles()
 	// 1. send "list" command
 	const char* cmdList = "list\n";
 	DWORD written = 0;
-	if (!WriteFile(m_hPipe, cmdList, (DWORD)strlen(cmdList), &written, NULL)) {
+	if (!WriteFile(m_hRequestPipe, cmdList, (DWORD)strlen(cmdList), &written, NULL)) {
 		MessageBox(L"Unable to write 'list to pipe'", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false;
 		return;
 	}
-
+	pipeblocked = false;
 	std::string listJsonStr;
 	if (!ReadFromPipeWithTimeout(10000, listJsonStr)) {
 		MessageBox(L"Timeout(10s) when reading result from pipe(list).", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false;
 		return;
 	}
 
@@ -78,55 +82,63 @@ void CsteamcloudDlg::GetFiles()
 	}
 	catch (...) {
 		MessageBox(L"Error on parsing JSON result from pipe(list)", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false;
 		return;
 	}
 
-	int index = 0;
-	for (auto& [key, val] : j.items()) {
-		if (!val.is_object()) continue;
-
-		std::string name = val.value("name", "");
-		uint64_t timestamp = val.value("timestamp", 0);
-		int size = val.value("size", 0);
-		bool exists = val.value("exists", false);
-		bool persisted = val.value("persistent", false);
-		CString namecs(name.c_str());
-		m_fileSizesBytes[namecs] = size;
-		CString nameW(name.c_str());
-		CString sizeW, dateW;
-
-		// Velikost
-		switch (sizeunit) {
-		case 0: sizeW.Format(L"%d", size); break;
-		case 1: sizeW.Format(L"%.4f", (float)size / 1024); break;
-		case 2: sizeW.Format(L"%.4f", (float)size / (1024 * 1024)); break;
-		default: sizeW.Format(L"%d", size); break;
-		}
-
-		// Datum
-		wchar_t dateBuf[100] = {};
-		tm* timeinfo = localtime((time_t*)&timestamp);
-		wcsftime(dateBuf, sizeof(dateBuf) / sizeof(wchar_t), L"%e.%m.%Y %H:%M:%S", timeinfo);
-		dateW = dateBuf;
-
-		listfiles->InsertItem(index, nameW);
-		listfiles->SetItemText(index, 1, dateW);
-		listfiles->SetItemText(index, 2, sizeW);
-		listfiles->SetItemText(index, 3, persisted ? L"true" : L"false");
-		listfiles->SetItemText(index, 4, exists ? L"true" : L"false");
-		index++;
+	if (j.is_array() && j.empty()) {
+		empty = true;
 	}
+	if(!empty)
+	{ 
+		int index = 0;
+		for (auto& [key, val] : j.items()) {
+			if (!val.is_object()) continue;
 
+			std::string name = val.value("name", "");
+			uint64_t timestamp = val.value("timestamp", 0);
+			int size = val.value("size", 0);
+			bool exists = val.value("exists", false);
+			bool persisted = val.value("persistent", false);
+			CString namecs(name.c_str());
+			m_fileSizesBytes[namecs] = size;
+			CString nameW(name.c_str());
+			CString sizeW, dateW;
+
+			// Size formatting based on sizeunit
+			switch (sizeunit) {
+			case 0: sizeW.Format(L"%d", size); break;
+			case 1: sizeW.Format(L"%.4f", (float)size / 1024); break;
+			case 2: sizeW.Format(L"%.4f", (float)size / (1024 * 1024)); break;
+			default: sizeW.Format(L"%d", size); break;
+			}
+
+			// Date formatting
+			wchar_t dateBuf[100] = {};
+			tm* timeinfo = localtime((time_t*)&timestamp);
+			wcsftime(dateBuf, sizeof(dateBuf) / sizeof(wchar_t), L"%e.%m.%Y %H:%M:%S", timeinfo);
+			dateW = dateBuf;
+
+			listfiles->InsertItem(index, nameW);
+			listfiles->SetItemText(index, 1, dateW);
+			listfiles->SetItemText(index, 2, sizeW);
+			listfiles->SetItemText(index, 3, persisted ? L"true" : L"false");
+			listfiles->SetItemText(index, 4, exists ? L"true" : L"false");
+			index++;
+		}
+	}
 	// 3. quota
 	const char* cmdQuota = "quota\n";
-	if (!WriteFile(m_hPipe, cmdQuota, (DWORD)strlen(cmdQuota), &written, NULL)) {
+	if (!WriteFile(m_hRequestPipe, cmdQuota, (DWORD)strlen(cmdQuota), &written, NULL)) {
 		MessageBox(L"Cannot write the 'quota' command to pipe.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false;
 		return;
 	}
 
 	std::string quotaJsonStr;
 	if (!ReadFromPipeWithTimeout(5000, quotaJsonStr)) {
 		MessageBox(L"Response read timeout (quota).", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false;
 		return;
 	}
 
@@ -136,11 +148,13 @@ void CsteamcloudDlg::GetFiles()
 	}
 	catch (...) {
 		MessageBox(L"Error parsing JSON response (quota).", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false;
 		return;
 	}
 
 	if (!quotaJsonArray.is_array() || quotaJsonArray.empty()) {
 		MessageBox(L"Invalid quota response format.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false;
 		return;
 	}
 
@@ -276,16 +290,15 @@ BOOL CsteamcloudDlg::OnNotify(WPARAM wParam, LPARAM lParam, LRESULT* pResult)
 
 BOOL CsteamcloudDlg::OnInitDialog()
 {
-
 	returned = (wchar_t*)malloc(300);
 	int out;
 	DWORD indata =  1;
 	DWORD outdata = 0;
 	BYTE cmp = 1;
 	type = REG_DWORD;
-	m_hPipe = CreateNamedPipeW(
-		L"\\\\.\\pipe\\SteamDlgPipe",
-		PIPE_ACCESS_DUPLEX,
+	m_hRequestPipe = CreateNamedPipeW(
+		L"\\\\.\\pipe\\SteamDlgRequestPipe",
+		PIPE_ACCESS_OUTBOUND,
 		PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
 		1,
 		4096,
@@ -293,12 +306,55 @@ BOOL CsteamcloudDlg::OnInitDialog()
 		0,
 		NULL);
 
-	if (m_hPipe == INVALID_HANDLE_VALUE)
+	if (m_hRequestPipe == INVALID_HANDLE_VALUE)
 	{
 		MessageBox(L"Error creating pipe.", L"Error", MB_OK | MB_ICONERROR);
 	}
+	m_hResponsePipe = CreateNamedPipeW(
+		L"\\\\.\\pipe\\SteamDlgResponsePipe",
+		PIPE_ACCESS_INBOUND,
+		PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+		1,
+		4096,
+		4096,
+		0,
+		NULL);
+
+	if (m_hResponsePipe == INVALID_HANDLE_VALUE)
+	{
+		MessageBox(L"Error creating response pipe.", L"Error", MB_OK | MB_ICONERROR);
+	}
+
+
+	if(m_hRequestPipe != INVALID_HANDLE_VALUE && m_hResponsePipe != INVALID_HANDLE_VALUE)
+	{
+		DisconnectNamedPipe(m_hRequestPipe);
+		DisconnectNamedPipe(m_hResponsePipe);
+		m_RequestThreadEnabled = true;
+		m_ResponseThreadEnabled = true;
+		m_RequestpipeThread = std::thread(&CsteamcloudDlg::RequestPipeThread, this);
+		m_ResponsepipeThread = std::thread(&CsteamcloudDlg::ResponsePipeThread, this);
+		if(m_RequestpipeThread.joinable())
+		{
+			m_RequestpipeThread.detach();
+		}
+		if(m_ResponsepipeThread.joinable())
+		{
+			m_ResponsepipeThread.detach();
+		}
+	} else
+	{
+		exit(1);
+	}
 	//AfxInitRichEdit2();
-	
+	while (!m_RequestThreadRunning)
+	{
+		Sleep(10); // Wait for the request thread to start
+	}
+	while (!m_ResponseThreadRunning)
+	{
+		Sleep(10); // Wait for the response thread to start
+	}
 	CsteamcloudDlg::ShowWindow(SW_SHOW);
 	CsteamcloudDlg::RedrawWindow();
 	CsteamcloudDlg::CenterWindow();
@@ -642,13 +698,14 @@ int CsteamcloudDlg::OnCreate(LPCREATESTRUCT lpCreateStruct)
 
 void CsteamcloudDlg::OnDestroy()
 {
+	
 	if (init)
 	{
-		if (m_hWorkerProcess && m_hPipe)
+		if (m_hWorkerProcess && m_hRequestPipe)
 		{
 			const char* exitCmd = "exit\n";
 			DWORD bytesWritten = 0;
-			if (WriteFile(m_hPipe, exitCmd, (DWORD)strlen(exitCmd), &bytesWritten, NULL))
+			if (WriteFile(m_hRequestPipe, exitCmd, (DWORD)strlen(exitCmd), &bytesWritten, NULL))
 			{
 				Sleep(200); // Wait for the worker process to handle the exit command
 
@@ -662,12 +719,60 @@ void CsteamcloudDlg::OnDestroy()
 		}
 		init = false;
 	}
-	if (m_hPipe && m_hPipe != INVALID_HANDLE_VALUE)
+	m_RequestThreadEnabled = false;
+	m_ResponseThreadEnabled = false;
+	if(m_RequestThreadWaiting)
 	{
-		CloseHandle(m_hPipe);
-		m_hPipe = NULL;
+		// Create a dummy client to unblock the request thread if it's waiting for a connection
+		HANDLE dummyClient = CreateFileW(
+			L"\\\\.\\pipe\\SteamDlgRequestPipe",
+			GENERIC_READ,
+			0,
+			NULL,
+			OPEN_EXISTING,
+			0,
+			NULL);
+		DWORD err = GetLastError();
+		if (dummyClient != INVALID_HANDLE_VALUE)
+		{
+			CloseHandle(dummyClient);
+		}
 	}
-
+	if(m_ResponseThreadWaiting)
+	{
+		// Create a dummy client to unblock the response thread if it's waiting for a connection
+		HANDLE dummyClient = CreateFileW(
+			L"\\\\.\\pipe\\SteamDlgResponsePipe",
+			GENERIC_WRITE,
+			0,
+			NULL,
+			OPEN_EXISTING,
+			0,
+			NULL);
+		DWORD err = GetLastError();
+		if (dummyClient != INVALID_HANDLE_VALUE)
+		{
+			CloseHandle(dummyClient);
+		}
+	}
+	while(m_RequestThreadRunning)
+	{
+		Sleep(100); // Wait for threads to finish
+	}
+	while(m_ResponseThreadRunning)
+	{
+		Sleep(100); // Wait for threads to finish
+	}
+	if (m_hRequestPipe && m_hRequestPipe != INVALID_HANDLE_VALUE)
+	{
+		CloseHandle(m_hRequestPipe);
+		m_hRequestPipe = NULL;
+	}
+	if (m_hResponsePipe && m_hResponsePipe != INVALID_HANDLE_VALUE)
+	{
+		CloseHandle(m_hResponsePipe);
+		m_hResponsePipe = NULL;
+	}
 	CDialog::OnDestroy();
 	if (m_nidIconData.hWnd && m_nidIconData.uID > 0 && TrayIsVisible())
 	{
@@ -998,24 +1103,28 @@ PCHAR* CsteamcloudDlg::CommandLineToArgvA(PCHAR CmdLine,int* _argc)
 
 void CsteamcloudDlg::OnBnClickedConnect()
 {
+	pipeblocked = true; // Block the pipe to prevent multiple connections at once
 	Clearlist();
-	// Získání a validace AppID
+	// Obtain the AppID from the input field
 	CString appidStr;
 	inputappid->GetWindowTextW(appidStr);
 	appidStr.Trim();
 	if (appidStr.IsEmpty()) {
 		MessageBox(L"App ID is empty, please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false; // Unblock the pipe if input is invalid
 		return;
 	}
 	for (int i = 0; i < appidStr.GetLength(); ++i) {
 		if (!isdigit(appidStr[i])) {
 			MessageBox(L"App ID must be a number!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			pipeblocked = false; // Unblock the pipe if input is invalid
 			return;
 		}
 	}
 	int appid = _wtoi(appidStr);
 	if (appid < 1) {
 		MessageBox(L"App ID must be greater than 0!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false; // Unblock the pipe if input is invalid
 		return;
 	}
 
@@ -1026,6 +1135,7 @@ void CsteamcloudDlg::OnBnClickedConnect()
 		WCHAR tempPath[MAX_PATH];
 		if (!GetEnvironmentVariableW(L"TEMP", tempPath, MAX_PATH)) {
 			MessageBox(L"Cannot get TEMP path.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			pipeblocked = false; // Unblock the pipe if TEMP cannot be determined
 			return;
 		}
 		CString workerPath = CString(tempPath) + L"\\steam-worker.exe";
@@ -1038,17 +1148,19 @@ void CsteamcloudDlg::OnBnClickedConnect()
 
 		// Resource extraction
 		if (!PathFileExistsW(workerPath)) {
-			DeleteFileW(workerPath); // Odstranění předchozí verze, pokud existuje
+			DeleteFileW(workerPath); // Remove Previous Version if exists - needed when steam-worker.exe is updated
 		}
 		if (!ExtractResourceToFile(AfxGetInstanceHandle(), MAKEINTRESOURCE(IDR_WORKER), RT_RCDATA, workerPath)) {
 			MessageBox(L"Unable to extract steam-worker.exe!", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			pipeblocked = false; // Unblock the pipe if worker cannot be extracted
 			return;
 		}
 		if (!PathFileExistsW(dllPath)) {
-			DeleteFileW(dllPath); // Remove Previous Version if exists - needed when steam-worker.exe is updated
+			DeleteFileW(dllPath); // Remove Previous Version if exists - needed when dll is updated
 		}
 		if (!ExtractResourceToFile(AfxGetInstanceHandle(), MAKEINTRESOURCE(IDR_STEAMDLL), RT_RCDATA, dllPath)) {
 			MessageBox(L"Cannot extract steam_api DLL!", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			pipeblocked = false; // Unblock the pipe if DLL cannot be extracted
 			return;
 		}
 
@@ -1057,50 +1169,33 @@ void CsteamcloudDlg::OnBnClickedConnect()
 		STARTUPINFOW si = { sizeof(si) };
 		if (!CreateProcessW(workerPath, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
 			MessageBox(L"Failed to start steam-worker.exe", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			pipeblocked = false; // Unblock the pipe if worker cannot be started
 			return;
 		}
 		m_hWorkerProcess = pi.hProcess;
 		CloseHandle(pi.hThread);
 
 		// Wait for the worker to send "READY" message - this is crucial to ensure the worker is ready before sending any commands
-		char buffer[1024];
-		DWORD bytesRead = 0;
-		bool readyReceived = false;
+		std::string output;
 		const DWORD timeoutMs = 10000;
-		DWORD startTime = GetTickCount64();
 
-		while (GetTickCount64() - startTime < timeoutMs)
+		if (!ReadFromPipeWithTimeout(timeoutMs, output))
 		{
-			DWORD bytesAvailable = 0;
-			if (PeekNamedPipe(m_hPipe, NULL, 0, NULL, &bytesAvailable, NULL) && bytesAvailable > 0)
-			{
-				if (ReadFile(m_hPipe, buffer, sizeof(buffer) - 1, &bytesRead, NULL) && bytesRead > 0)
-				{
-					buffer[bytesRead] = '\0';
-					if (strcmp(buffer, "READY") == 0)
-					{
-						readyReceived = true;
-						break;
-					}
-					else
-					{
-						MessageBox(L"Worker doesn't sended READY", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-						TerminateProcess(m_hWorkerProcess, 1);
-						CloseHandle(m_hWorkerProcess);
-						m_hWorkerProcess = NULL;
-						return;
-					}
-				}
-			}
-			Sleep(100);
-		}
-		// If we reach here and readyReceived is still false, it means we timed out waiting for READY
-		if (!readyReceived)
-		{
-			MessageBox(L"Worker doesn't sended READY in 10s.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			MessageBox(L"Worker doesn't respond within 10s.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
 			TerminateProcess(m_hWorkerProcess, 1);
 			CloseHandle(m_hWorkerProcess);
 			m_hWorkerProcess = NULL;
+			pipeblocked = false; // Unblock the pipe if worker does not respond
+			return;
+		}
+
+		if (output != "READY")
+		{
+			MessageBox(L"Worker didn't send READY", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			TerminateProcess(m_hWorkerProcess, 1);
+			CloseHandle(m_hWorkerProcess);
+			m_hWorkerProcess = NULL;
+			pipeblocked = false; // Unblock the pipe if worker does not send READY
 			return;
 		}
 	}
@@ -1108,71 +1203,66 @@ void CsteamcloudDlg::OnBnClickedConnect()
 	// Send the connect command to the worker with the specified AppID
 	std::string cmd = "connect " + std::to_string(appid) + "\n";
 	DWORD bytesWritten = 0;
-	if (!WriteFile(m_hPipe, cmd.c_str(), (DWORD)cmd.length(), &bytesWritten, NULL)) {
+	if (!WriteFile(m_hRequestPipe, cmd.c_str(), (DWORD)cmd.length(), &bytesWritten, NULL)) {
 		MessageBox(L"Can't write to pipe.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false; // Unblock the pipe if writing fails
 		return;
 	}
 
 	// Wait for a response from the worker within 5seconds
-	char response[4096];
-	DWORD bytesRead = 0;
-	const DWORD replyTimeoutMs = 5000;
-	DWORD replyStart = GetTickCount64();
-	bool gotReply = false;
-
-	while (GetTickCount64() - replyStart < replyTimeoutMs)
+	string response;
+	if (!ReadFromPipeWithTimeout(1000, response))
 	{
-		DWORD bytesAvailable = 0;
-		if (PeekNamedPipe(m_hPipe, NULL, 0, NULL, &bytesAvailable, NULL) && bytesAvailable > 0)
-		{
-			if (ReadFile(m_hPipe, response, sizeof(response) - 1, &bytesRead, NULL) && bytesRead > 0)
-			{
-				response[bytesRead] = '\0';
-				gotReply = true;
-				break;
-			}
-		}
-		Sleep(100);
-	}
-	// If we reach here and gotReply is still false, it means we timed out waiting for a reply
-	if (!gotReply)
-	{
+		// If we reach here and gotReply is still false, it means we timed out waiting for a reply
 		MessageBox(L"No response from worker", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false; // Unblock the pipe if no response is received
 		return;
 	}
 
 	try {
 		auto parsed = json::parse(response);
-		if (parsed.is_array() && parsed.size() > 0 && parsed[0]["status"] == "connected") {
-			UpdateAppIdHistoryFromInput();
-			SaveComboBoxHistory();
-			Clearlist();
-			GetFiles(); // Get files after successful connection
-			deletefile->EnableWindow();
-			upload->EnableWindow();
-			uploaddir->EnableWindow();
-			download->EnableWindow();
-			refresh->EnableWindow();
-			quota->ShowWindow(1);
-			disconnect->EnableWindow();
-			init = true;
-			//MessageBox(L"Successfull connection", L"Info", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
+		if (parsed.is_array() && parsed.size() > 0) {
+			std::string status = parsed[0].value("status", "");
+
+			if (status == "connected") {
+				UpdateAppIdHistoryFromInput();
+				SaveComboBoxHistory();
+				Clearlist();
+				GetFiles(); // Get files after successful connection
+				deletefile->EnableWindow();
+				upload->EnableWindow();
+				uploaddir->EnableWindow();
+				download->EnableWindow();
+				refresh->EnableWindow();
+				quota->ShowWindow(1);
+				disconnect->EnableWindow();
+				init = true;
+				pipeblocked = false; // Unblock the pipe after successful connection
+				return;
+			}
+			else if (status == "SteamAPI_Init failed" || status == "SteamAPI not initialized") {
+				CString msg(status.c_str());
+				MessageBox(msg, L"SteamAPI Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+				pipeblocked = false; // Unblock the pipe if SteamAPI initialization fails
+			}
 		}
-		else {
-			CString jsonStr(response);
-			MessageBox(jsonStr, L"Worker Response", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		}
+		// If we reach here, it means the response is not in the expected format
+		CString jsonStr(response.c_str());
+		MessageBox(jsonStr, L"Worker Response", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false;
 	}
 	catch (const std::exception& e) {
 		CString msg;
 		msg.Format(L"Error when parsing JSON: %S", e.what());
 		MessageBox(msg, L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false;
 	}
 }
 
 
 void CsteamcloudDlg::OnBnClickedDelete()
 {
+	pipeblocked = true; // Block the pipe to prevent multiple connections at once
 	int files[25] = { -1 };
 	fill_n(files, 25, -1);
 	int count = 0;
@@ -1181,6 +1271,7 @@ void CsteamcloudDlg::OnBnClickedDelete()
 	if (pos == NULL)
 	{
 		MessageBox(L"No file is selected! Please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false; // Unblock the pipe if no files are selected
 		return;
 	}
 
@@ -1205,9 +1296,10 @@ void CsteamcloudDlg::OnBnClickedDelete()
 
 	std::string command = cmd.str();
 	DWORD written = 0;
-	if (!WriteFile(m_hPipe, command.c_str(), (DWORD)command.size(), &written, NULL))
+	if (!WriteFile(m_hRequestPipe, command.c_str(), (DWORD)command.size(), &written, NULL))
 	{
 		MessageBox(L"Failed to send delete command to worker!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false; // Unblock the pipe if writing fails
 		return;
 	}
 
@@ -1216,6 +1308,7 @@ void CsteamcloudDlg::OnBnClickedDelete()
 	if (!ReadFromPipeWithTimeout(5000, output))
 	{
 		MessageBox(L"Timeout while waiting for delete response!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false; // Unblock the pipe if reading fails
 		return;
 	}
 
@@ -1224,6 +1317,11 @@ void CsteamcloudDlg::OnBnClickedDelete()
 	CString result;
 	try {
 		auto j = json::parse(output);
+
+		if (j.is_array() && j.empty())
+			pipeblocked = false; // Unblock the pipe if the response is an empty array
+			return; // Do not show a message box if no files were deleted
+
 		for (auto& entry : j)
 		{
 			std::string name = entry.value("name", "");
@@ -1237,18 +1335,20 @@ void CsteamcloudDlg::OnBnClickedDelete()
 		CString err;
 		err.Format(L"Failed to parse JSON: %S", e.what());
 		MessageBox(err, L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false; // Unblock the pipe if JSON parsing fails
 		return;
 	}
 
-	MessageBox(result, L"Delete result", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
-
+	MessageBox(result, L"Delete result", MB_OK | MB_TOPMOST);
 	Clearlist();
 	GetFiles();
+	pipeblocked = false; // Unblock the pipe after successful deletion
 }
 
 
 void CsteamcloudDlg::OnBnClickedUpload()
 {
+	pipeblocked = true; // Block the pipe to prevent multiple connections at once
 	bool fileopened[MAX_FILES_COUNT] = { false };
 	bool filesizeok[MAX_FILES_COUNT] = { false };
 	wchar_t filelist[MAX_FILES_COUNT][MAX_PATH] = { 0 };
@@ -1259,7 +1359,7 @@ void CsteamcloudDlg::OnBnClickedUpload()
 	DWORD maxfiles = 10;
 	fstream file;
 
-	// Výběr souborů
+	// Create a file dialog to select files for upload
 	CFileDialog dlg(TRUE, NULL, NULL,
 		OFN_ALLOWMULTISELECT | OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_NONETWORKBUTTON | OFN_PATHMUSTEXIST,
 		L"All Files (*.*)|*.*||", this);
@@ -1271,10 +1371,13 @@ void CsteamcloudDlg::OnBnClickedUpload()
 	filenames.GetBufferSetLength(size);
 	ofn.lpstrFile = filenames.GetBuffer();
 	ofn.nMaxFile = size;
-
-	if (dlg.DoModal() != IDOK) return;
-
-	// Získání cesty a jmen souborů
+	INT_PTR ressss = dlg.DoModal();
+	if (ressss != IDOK)
+	{ 
+		pipeblocked = false; 
+		return;
+	}
+	// Get the selected files and directory
 	int pos = -1;
 	pos = FindPosition(filenames.GetBuffer(), pos);
 	wcscpy_s(dirname, filenames.GetString());
@@ -1299,7 +1402,7 @@ void CsteamcloudDlg::OnBnClickedUpload()
 		swprintf_s(filename[i], L"%s", &filenames.GetBuffer()[prevpos + 1]);
 	}
 
-	// Sestavení příkazu upload cloudname,localpath;...
+	// Create the upload command
 	std::ostringstream uploadCommand;
 	uploadCommand << "upload ";
 
@@ -1334,25 +1437,26 @@ void CsteamcloudDlg::OnBnClickedUpload()
 		}
 	}
 
-	// Odeslat do pipe
+	// Send the upload command to the worker
 	std::string commandStr = uploadCommand.str();
 	DWORD bytesWritten = 0;
-	if (!WriteFile(m_hPipe, commandStr.c_str(), (DWORD)commandStr.size(), &bytesWritten, NULL))
+	if (!WriteFile(m_hRequestPipe, commandStr.c_str(), (DWORD)commandStr.size(), &bytesWritten, NULL))
 	{
 		MessageBox(L"Unable to write to pipe!", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false; // Unblock the pipe if writing fails
 		return;
 	}
 
-	// Čekání na odpověď
+	// Wait for a response from the worker
 	std::string output;
 	if (!ReadFromPipeWithTimeout(10000, output))
 	{
 		MessageBox(L"Unable to read response from pipe.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false; // Unblock the pipe if reading fails
 		return;
 	}
 
-	// Parsuj JSON
-	using json = nlohmann::json;
+	// Parse the JSON response
 	CString msg;
 	try {
 		auto j = json::parse(output);
@@ -1360,31 +1464,47 @@ void CsteamcloudDlg::OnBnClickedUpload()
 		{
 			if (entry.contains("error"))
 			{
-				msg += CString(entry["name"].get<std::string>().c_str()) + L": " +
-					CString(entry["error"].get<std::string>().c_str()) + L"\r\n";
+				CString namePart;
+				if (entry.contains("name")) {
+					namePart = CString(entry["name"].get<std::string>().c_str()) + L": ";
+				}
+				else if (entry.contains("input")) {
+					namePart = CString(entry["input"].get<std::string>().c_str()) + L": ";
+				}
+				msg += namePart + CString(entry["error"].get<std::string>().c_str()) + L"\r\n";
 			}
-			else
+			else if (entry.contains("name") && entry.contains("size"))
 			{
 				msg += CString(entry["name"].get<std::string>().c_str()) + L": uploaded (" +
 					std::to_wstring(entry["size"].get<int>()).c_str() + L" bytes)\r\n";
+			}
+			else
+			{
+				msg += L"Unknown entry format in response.\r\n";
 			}
 		}
 	}
 	catch (...) {
 		MessageBox(L"Answer from worker is not valid JSON!", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false; // Unblock the pipe if JSON parsing fails
 		return;
 	}
 
-	MessageBox(msg, L"Upload results", MB_OK | MB_TOPMOST);
+	if (!msg.IsEmpty()) {
+		MessageBox(msg, L"Upload results", MB_OK | MB_TOPMOST);
+	}
+
 
 	Clearlist();
 	GetFiles();
+	pipeblocked = false; // Unblock the pipe after successful upload
 }
 
 
 
 void CsteamcloudDlg::OnBnClickedDirupload()
 {
+	pipeblocked = true; // Block the pipe to prevent multiple connections at once
 	bool emptydir = true;
 	prompt dialog(this);
 	wchar_t filelist[MAX_FILES_COUNT][MAX_PATH] = { 0 };
@@ -1416,14 +1536,14 @@ void CsteamcloudDlg::OnBnClickedDirupload()
 			wcscpy_s(dirupload, returned);
 			emptydir = true;
 
-			// Převést \ na /
+			// Convert backslashes to forward slashes
 			for (int i = 0; dirupload[i]; ++i)
 			{
 				if (dirupload[i] == L'\\')
 					dirupload[i] = L'/';
 			}
 
-			// Odebrat koncové /
+			// Delete trailing slashes
 			size_t len = wcslen(dirupload);
 			while (len > 0 && dirupload[len - 1] == L'/')
 			{
@@ -1477,7 +1597,7 @@ void CsteamcloudDlg::OnBnClickedDirupload()
 				swprintf_s(filelist[i], L"%s\\%s", dirname, &filenames.GetBuffer()[prevpos + 1]);
 			}
 
-			// vytvoření příkazu upload
+			// Making the upload command
 			std::ostringstream uploadCommand;
 			uploadCommand << "upload ";
 			for (int i = 0; i < filecount; i++)
@@ -1490,12 +1610,13 @@ void CsteamcloudDlg::OnBnClickedDirupload()
 
 			DWORD written;
 			std::string commandStr = uploadCommand.str();
-			WriteFile(m_hPipe, commandStr.c_str(), (DWORD)commandStr.size(), &written, NULL);
+			WriteFile(m_hRequestPipe, commandStr.c_str(), (DWORD)commandStr.size(), &written, NULL);
 
 			std::string response;
 			if (!ReadFromPipeWithTimeout(5000, response))
 			{
 				MessageBox(L"Timeout while uploading files", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+				pipeblocked = false; // Unblock the pipe if reading fails
 				return;
 			}
 
@@ -1503,17 +1624,17 @@ void CsteamcloudDlg::OnBnClickedDirupload()
 			{
 				json parsed = json::parse(response);
 				std::wstring output;
+
 				for (auto& entry : parsed)
 				{
-					std::wstring name = CA2W(entry["name"].get<std::string>().c_str());
-					if (entry.contains("status") && entry["status"] == "uploaded")
-					{
-						output += L"✔️ ";
-					}
-					else if (entry.contains("error"))
-					{
-						output += L"❌ ";
-					}
+					std::wstring name;
+					if (entry.contains("name"))
+						name = CA2W(entry["name"].get<std::string>().c_str());
+					else if (entry.contains("input"))
+						name = CA2W(entry["input"].get<std::string>().c_str());
+					else
+						name = L"<unknown>";
+
 					output += name;
 
 					if (entry.contains("error"))
@@ -1521,9 +1642,16 @@ void CsteamcloudDlg::OnBnClickedDirupload()
 						output += L" - ";
 						output += CA2W(entry["error"].get<std::string>().c_str());
 					}
-					output += L"\n";
+					else if (entry.contains("status") && entry["status"] == "uploaded")
+					{
+						output += L": uploaded (" + std::to_wstring(entry["size"].get<int>()) + L" bytes)";
+					}
+
+					output += L"\r\n";
 				}
-				MessageBox(output.c_str(), L"Upload result", MB_OK | MB_TOPMOST);
+
+				if (!output.empty())
+					MessageBox(output.c_str(), L"Upload result", MB_OK | MB_TOPMOST);
 			}
 			catch (...)
 			{
@@ -1535,15 +1663,17 @@ void CsteamcloudDlg::OnBnClickedDirupload()
 	Clearlist();
 	GetFiles();
 	Sleep(1);
+	pipeblocked = false; // Unblock the pipe after successful upload
 }
 
 void CsteamcloudDlg::OnBnClickedDownload()
 {
+	pipeblocked = true; // Block the pipe to prevent multiple connections at once
 	constexpr int MAX_SELECTED = 10;
 	int selectedIndices[MAX_SELECTED];
 	int count = 0;
 
-	// Získání vybraných řádků
+	// Get selected items from the list control
 	POSITION pos = listfiles->GetFirstSelectedItemPosition();
 	while (pos && count < MAX_SELECTED)
 	{
@@ -1554,6 +1684,7 @@ void CsteamcloudDlg::OnBnClickedDownload()
 	if (count == 0)
 	{
 		MessageBox(L"No file is selected! Please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false; // Unblock the pipe if no files are selected
 		return;
 	}
 
@@ -1569,6 +1700,7 @@ void CsteamcloudDlg::OnBnClickedDownload()
 
 		CFileDialog filedialog(FALSE, NULL, fileName, OFN_OVERWRITEPROMPT | OFN_HIDEREADONLY, L"All Files (*.*)|*.*||");
 		if (filedialog.DoModal() != IDOK)
+			pipeblocked = false; // Unblock the pipe if dialog is cancelled
 			return;
 
 		CString fullOutput = filedialog.GetPathName();
@@ -1580,6 +1712,7 @@ void CsteamcloudDlg::OnBnClickedDownload()
 		// If multiple files are selected, ask for target directory
 		CFolderPickerDialog dialog(NULL, OFN_EXPLORER | OFN_NONETWORKBUTTON | OFN_PATHMUSTEXIST | OFN_CREATEPROMPT, this);
 		if (dialog.DoModal() != IDOK)
+			pipeblocked = false; // Unblock the pipe if dialog is cancelled
 			return;
 
 		targetDirectory = dialog.GetFolderPath();
@@ -1620,17 +1753,19 @@ void CsteamcloudDlg::OnBnClickedDownload()
 
 	// sending command to worker
 	DWORD bytesWritten = 0;
-	if (!WriteFile(m_hPipe, cmd.c_str(), (DWORD)cmd.length(), &bytesWritten, NULL))
+	if (!WriteFile(m_hRequestPipe, cmd.c_str(), (DWORD)cmd.length(), &bytesWritten, NULL))
 	{
 		MessageBox(L"Unable to write to pipe", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false; // Unblock the pipe if writing fails
 		return;
 	}
 
-	// Čtení odpovědi
+	// Reading response from worker
 	std::string response;
 	if (!ReadFromPipeWithTimeout(10000, response))
 	{
 		MessageBox(L"Unable to get answer from worker.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		pipeblocked = false; // Unblock the pipe if reading fails
 		return;
 	}
 	//ss
@@ -1639,43 +1774,65 @@ void CsteamcloudDlg::OnBnClickedDownload()
 		using json = nlohmann::json;
 		json result = json::parse(response);
 
+		if (result.is_array() && result.empty())
+			pipeblocked = false; // Unblock the pipe if the response is empty array
+			return; // Don't display anything if the array is empty
+
 		CString statusMsg;
 		for (const auto& item : result)
 		{
-			std::string name = item.value("name", "");
-			std::string status = item.value("status", "");
+			CString name = CA2W(item.value("name", "").c_str());
+			CString status = CA2W(item.value("status", "").c_str());
 			int size = item.value("size", 0);
 
-			CString line;
-			line.Format(L"%S - %S - %d bytes\n", name.c_str(), status.c_str(), size);
-			statusMsg += line;
+			if (status.IsEmpty())
+			{
+				// If status is empty, check for error
+				if (item.contains("error"))
+				{
+					CString error = CA2W(item["error"].get<std::string>().c_str());
+					statusMsg += name + L": " + error + L"\r\n";
+				}
+				else
+				{
+					statusMsg += name + L": unknown status\r\n";
+				}
+			}
+			else
+			{
+				statusMsg += name + L": " + status + L" (" + std::to_wstring(size).c_str() + L" bytes)\r\n";
+			}
 		}
 
-		MessageBox(statusMsg, L"Download status", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
+		MessageBox(statusMsg, L"Download status", MB_OK | MB_TOPMOST);
 	}
 	catch (...)
 	{
 		MessageBox(L"Error on parsing JSON response.", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
 	}
+	pipeblocked = false; // Unblock the pipe after successful download
 }
 
 
 
 void CsteamcloudDlg::OnBnClickedRefresh()
 {
+	pipeblocked = true; // Set the flag to prevent further actions while refreshing
 	Clearlist();
 	GetFiles();
+	pipeblocked = false; // Reset the flag after refreshing
 }
 
 void CsteamcloudDlg::OnBnClickedDisconnect()
 {
 	if (!init) return; // If not initialized, do nothing
 	// Attempt to send exit command to worker process
-	if (m_hWorkerProcess && m_hPipe)
+	if (m_hWorkerProcess && m_hRequestPipe)
 	{
+		pipeblocked = true; // Set the flag to prevent further actions while disconnecting
 		const char* exitCmd = "exit\n";
 		DWORD bytesWritten = 0;
-		if (!WriteFile(m_hPipe, exitCmd, (DWORD)strlen(exitCmd), &bytesWritten, NULL)) {
+		if (!WriteFile(m_hRequestPipe, exitCmd, (DWORD)strlen(exitCmd), &bytesWritten, NULL)) {
 			MessageBox(L"Unable to write to pipe (exit).", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
 		}
 		else
@@ -1687,28 +1844,28 @@ void CsteamcloudDlg::OnBnClickedDisconnect()
 			{
 				// If the worker process is still running, we will try to terminate it
 				if (!TerminateProcess(m_hWorkerProcess, 1)) {
+					// This shoudldn't never happen, but if it does, we inform the user
 					MessageBox(L"The worker process cannot be terminated manually.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
 				}
 				else {
-					MessageBox(L"Worker was terminated manually. Disconnected", L"Info", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
-					init = false;
+					//MessageBox(L"Worker was terminated manually. Disconnected", L"Info", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
 				}
 			}
 			else {
-				MessageBox(L"Worker has ended successfully. Disconnected.", L"Info", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
-				init = false;
+				//MessageBox(L"Worker has ended successfully. Disconnected.", L"Info", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
 			}
 		}
 	}
-
-	// Zavření handle
+	init = false; // Reset the initialization flag
+	pipeblocked = false; // Reset the pipe blocked flag
+	// Close worker process handle if it exists
 	if (m_hWorkerProcess)
 	{
 		CloseHandle(m_hWorkerProcess);
 		m_hWorkerProcess = NULL;
 	}
 
-	// Ukončení Steam a reset GUI
+	// Reset UI elements
 	download->EnableWindow(0);
 	deletefile->EnableWindow(0);
 	upload->EnableWindow(0);
@@ -1771,32 +1928,6 @@ void CsteamcloudDlg::OnBnClickedMbytes()
 	UpdateFileSizesDisplay();
 }
 
-//void CsteamcloudDlg::OnBnClickedTestsave()
-//{
-//	CString cstr;
-//	inputappid->GetWindowTextW(cstr);
-//	for (size_t i = 0; i < cstr.GetLength(); ++i)
-//	{
-//		if (!isdigit(cstr[i]))
-//		{
-			//AfxMessageBox(_T("Zadejte pouze čísla."));
-//			MessageBox(L"Please enter only numbers!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-//			return;
-//		}
-//	}
-//	UpdateAppIdHistoryFromInput();
-//	SaveComboBoxHistory();
-//}
-
-//void CsteamcloudDlg::OnBnClickedTestread()
-//{
-//	CString cstr;
-//	inputappid->GetWindowTextW(cstr);
-//	CString msg;
-//	msg.Format(L"Entered number: %s", (LPCTSTR)cstr);
-//	MessageBox(msg, L"Success", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
-//}
-
 void CsteamcloudDlg::LoadComboBoxHistory()
 {
 	const char* keyPath = "Software\\steamcloud";
@@ -1823,18 +1954,15 @@ void CsteamcloudDlg::LoadComboBoxHistory()
 		}
 	}
 
-	// Vytvořit m_appidList podle pořadí z AppList, kde první je nejnovější
 	m_appidList.clear();
 	for (size_t i = 0; i < len; ++i)
 	{
 		m_appidList.push_back(m_appidMap[appList[i]]);
 	}
 
-	// Zrcadlíme originál
 	m_appidList_orig = m_appidList;
 	m_appList_keyOrder = appList;
 
-	// Naplníme combobox (nejnovější nahoře)
 	inputappid->ResetContent();
 	for (const CString& val : m_appidList)
 		inputappid->AddString(val);
@@ -1848,15 +1976,12 @@ void CsteamcloudDlg::UpdateAppIdHistoryFromInput()
 	if (cstr.IsEmpty())
 		return;
 
-	// Odeber starý výskyt hodnoty, pokud existuje
 	auto it = std::find(m_appidList.begin(), m_appidList.end(), cstr);
 	if (it != m_appidList.end())
 		m_appidList.erase(it);
 
-	// Přidej hodnotu na začátek (nejnovější)
 	m_appidList.insert(m_appidList.begin(), cstr);
 
-	// Pokud máme více než 10, zapamatuj si nejstarší
 	CString removedValue;
 	if (m_appidList.size() > 10)
 	{
@@ -1864,21 +1989,18 @@ void CsteamcloudDlg::UpdateAppIdHistoryFromInput()
 		m_appidList.pop_back();
 	}
 
-	// Pokud keyOrder není plný, inicializuj
 	if (m_appList_keyOrder.size() < 10)
 		m_appList_keyOrder = "abcdefghij";
 
 	std::map<char, CString> newMap;
 	std::set<char> usedKeys;
 
-	// Zachováme staré mapování kromě odstraněné hodnoty
 	for (const auto& [key, val] : m_appidMap)
 	{
 		if (val != removedValue)
 			newMap[key] = val;
 	}
 
-	// Najdeme dostupné znaky podle původního pořadí
 	std::vector<char> availableKeys;
 	for (char ch : m_appList_keyOrder)
 	{
@@ -1886,7 +2008,6 @@ void CsteamcloudDlg::UpdateAppIdHistoryFromInput()
 			availableKeys.push_back(ch);
 	}
 
-	// Přiřadíme nové hodnoty do mapy
 	for (const CString& val : m_appidList)
 	{
 		bool exists = false;
@@ -1910,7 +2031,6 @@ void CsteamcloudDlg::UpdateAppIdHistoryFromInput()
 
 	m_appidMap = std::move(newMap);
 
-	// Vytvoříme nový m_appList_keyOrder: pro každý prvek v m_appidList najdi jeho klíč a přidej (nejnovější první)
 	std::string newOrder;
 	for (const auto& val : m_appidList)
 	{
@@ -1926,7 +2046,6 @@ void CsteamcloudDlg::UpdateAppIdHistoryFromInput()
 
 	m_appList_keyOrder = newOrder;
 
-	// Obnovíme combobox (nejnovější nahoře)
 	inputappid->ResetContent();
 	for (const auto& val : m_appidList)
 		inputappid->AddString(val);
@@ -1940,21 +2059,17 @@ void CsteamcloudDlg::SaveComboBoxHistory()
 	const char* keyPath = "Software\\steamcloud";
 	const char* keyNames = "abcdefghij";
 
-	// Pokud se seznam nezměnil, není potřeba nic dělat
 	if (m_appidList == m_appidList_orig)
 		return;
 
 	const size_t count = min(m_appidList.size(), 10);
 	std::string appList;
 
-	// Vytvoření AppList od nejnovější (první v m_appidList) po nejstarší (poslední)
-	// Ale zapisujeme pozpátku, abychom měli AppList ve formátu: jihgfedcba
 	for (auto it = m_appidList.begin(); it != m_appidList.end(); ++it)
 	{
 		const CString& val = *it;
 		char foundChar = 0;
 
-		// Najít, jestli už je hodnota v mapě
 		for (auto& [keyChar, strVal] : m_appidMap)
 		{
 			if (strVal == val)
@@ -1964,7 +2079,6 @@ void CsteamcloudDlg::SaveComboBoxHistory()
 			}
 		}
 
-		// Pokud není, přiřadíme nové písmeno (nejstarší z původního pořadí)
 		if (foundChar == 0)
 		{
 			if (!m_appList_keyOrder.empty())
@@ -1974,7 +2088,6 @@ void CsteamcloudDlg::SaveComboBoxHistory()
 			}
 			else
 			{
-				// fallback pokud by klíčový řetězec byl prázdný
 				foundChar = keyNames[appList.size()];
 			}
 
@@ -1984,7 +2097,6 @@ void CsteamcloudDlg::SaveComboBoxHistory()
 		appList.push_back(foundChar);
 	}
 
-	// Uložit hodnoty podle mapy
 	for (const auto& [keyChar, val] : m_appidMap)
 	{
 		char regName[2] = { keyChar, 0 };
@@ -1992,10 +2104,8 @@ void CsteamcloudDlg::SaveComboBoxHistory()
 		RegSetKey(HKEY_CURRENT_USER, (LPSTR)keyPath, REG_SZ, KEY_SET_VALUE, regName, strVal);
 	}
 
-	// Uložit AppList (např. jihgfedcba)
 	RegSetKey(HKEY_CURRENT_USER, (LPSTR)keyPath, REG_SZ, KEY_SET_VALUE, (LPSTR)"AppList", appList);
 
-	// Aktualizace originálu
 	m_appidList_orig = m_appidList;
 	m_appList_keyOrder = appList;
 }
@@ -2006,7 +2116,7 @@ void CsteamcloudDlg::UpdateFileSizesDisplay()
 
 	for (int i = 0; i < rowCount; ++i)
 	{
-		CString filename = listfiles->GetItemText(i, 0); // 1. sloupec: název souboru
+		CString filename = listfiles->GetItemText(i, 0);
 
 		auto it = m_fileSizesBytes.find(filename);
 		if (it != m_fileSizesBytes.end())
@@ -2030,16 +2140,14 @@ void CsteamcloudDlg::UpdateFileSizesDisplay()
 				break;
 			}
 
-			listfiles->SetItemText(i, 2, buf); // 3. sloupec
+			listfiles->SetItemText(i, 2, buf);
 		}
 		else
 		{
-			// Pokud název není v mapě, můžeš případně vymazat velikost nebo nechat jak je
 			listfiles->SetItemText(i, 2, L"");
 		}
 	}
 
-	// Aktualizovat kvótu stejným způsobem, pokud chceš
 	CString quotaText;
 	switch (sizeunit)
 	{
@@ -2058,3 +2166,73 @@ void CsteamcloudDlg::UpdateFileSizesDisplay()
 	}
 	SetDlgItemTextW(IDC_QUOTA, quotaText);
 }
+void CsteamcloudDlg::RequestPipeThread()
+{
+	while (m_RequestThreadEnabled)
+	{
+		m_RequestThreadRunning = true;
+		m_RequestThreadWaiting = true; // Set the request thread waiting flag to true indicating the thread is waiting for a connection
+		BOOL connected = ConnectNamedPipe(m_hRequestPipe, NULL) ?
+			TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
+		m_RequestThreadWaiting = false; // Set the request thread waiting flag to false indicating the thread is no longer waiting for a connection
+		if (!m_RequestThreadEnabled) break; // If the request thread is disabled, exit the loop immediately
+		if (!connected) {
+			Sleep(100); // delay before retrying connection
+			continue;
+		}
+		
+		m_brokenPipe = false; // Reset broken pipe status
+		while (m_RequestThreadEnabled)
+		{
+			m_statusrequestpipe = true;
+			const char* ping = ".\n";
+			DWORD written = 0;
+			BOOL ok = 1;
+			if (!pipeblocked) // When pipe is not blocked, send ping to worker, otherwise skip it, so we don't block the pipe and don't interrupt user actions
+				 ok = WriteFile(m_hRequestPipe, ping, (DWORD)strlen(ping), &written, NULL);
+			if (!ok) {
+				DWORD err = GetLastError();
+				if (err == ERROR_BROKEN_PIPE || err == ERROR_PIPE_NOT_CONNECTED || err == ERROR_NO_DATA) {
+					m_brokenPipe = true;
+					m_statusrequestpipe = false;
+					break;
+				}
+			}
+
+			Sleep(600); // sleep for 600 ms to avoid busy waiting and reduce CPU usage
+		}
+
+		// pipe is broken, we need to disconnect it and wait for the next connection
+		DisconnectNamedPipe(m_hRequestPipe);
+	}
+	m_RequestThreadRunning = false; // Set the request thread running flag to false indicating the thread has finished execution
+}
+void CsteamcloudDlg::ResponsePipeThread()
+{
+	while (m_ResponseThreadEnabled)
+	{
+		m_ResponseThreadRunning = true;
+		// wait for client to connect to response pipe
+		m_ResponseThreadWaiting = true;
+		BOOL connected = ConnectNamedPipe(m_hResponsePipe, NULL) ?
+			TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
+		m_ResponseThreadWaiting = false;
+		if (!m_ResponseThreadEnabled) break; // If the response thread is disabled, exit the loop immediately
+		if (!connected)
+		{
+			Sleep(100); // delay before retrying connection
+			continue;
+		}
+		m_statusresponsepipe = true;
+		// wait until another thread sets m_brokenPipe to true
+		while (!m_brokenPipe && m_ResponseThreadEnabled)
+		{
+			Sleep(600); // sleep for 600 ms to avoid busy waiting and reduce CPU usage
+		}
+		m_statusresponsepipe = false;
+		// pipe is broken, we need to disconnect it and wait for the next connection
+		DisconnectNamedPipe(m_hResponsePipe);
+	}
+	m_ResponseThreadRunning = false; // Set the response thread running flag to false indicating the thread has finished execution
+}
+

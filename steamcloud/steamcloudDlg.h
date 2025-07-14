@@ -9,12 +9,12 @@
 #include "functions.h"
 #include <sstream>
 #include <iterator>
+#include <thread>
 #include <algorithm>
 #include <map>
 #include <set>
 #include "json.hpp"
 using json = nlohmann::json;
-
 using namespace std;
 #define MAX_UNICODE_PATH 32766
 #define bufferSize 10
@@ -52,6 +52,22 @@ private:
 	uint64_t m_quotaUsed = 0;
 	uint64_t m_quotaTotal = 0;
 	uint64_t m_quotaAvailable = 0;
+	bool pipeconnected = false;
+	bool pipeblocked = false;
+	bool m_brokenPipe = false;
+	bool m_statusrequestpipe = false;
+	bool m_statusresponsepipe = false;
+	bool m_RequestThreadEnabled = false;
+	bool m_ResponseThreadEnabled = false;
+	bool m_RequestThreadRunning = false;
+	bool m_ResponseThreadRunning = false;
+	bool m_RequestThreadWaiting = false;
+	bool m_ResponseThreadWaiting = false;
+	bool firstRun = true;
+	void RequestPipeThread();
+	void ResponsePipeThread();
+	thread m_RequestpipeThread;
+	thread m_ResponsepipeThread;
 	afx_msg LRESULT OnTrayNotify(WPARAM wParam, LPARAM lParam);
 // Construction
 public:
@@ -87,7 +103,8 @@ public:
 	std::vector<CString> m_appidList_orig;
 	std::map<char, CString> m_appidMap;
 	string m_appList_keyOrder;
-	HANDLE m_hPipe = INVALID_HANDLE_VALUE;
+	HANDLE m_hRequestPipe = NULL;
+	HANDLE m_hResponsePipe = NULL;
 	HANDLE m_hWorkerProcess = NULL;
 	void LoadComboBoxHistory();
 	void SaveComboBoxHistory();

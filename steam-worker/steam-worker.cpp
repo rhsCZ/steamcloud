@@ -20,32 +20,52 @@ std::vector<std::string> TokenizeCommand(const std::string& input) {
 }
 
 int main() {
+	bool ping = false;
     char buffer[1024];
     DWORD bytesRead, bytesWritten;
-    HANDLE hPipe = CreateFileW(
-        L"\\\\.\\pipe\\SteamDlgPipe",
-        GENERIC_READ | GENERIC_WRITE,
+    HANDLE hRequestPipe = CreateFileW(
+        L"\\\\.\\pipe\\SteamDlgRequestPipe",
+        GENERIC_READ,
         0,
         NULL,
         OPEN_EXISTING,
         0,
         NULL);
 
-    if (hPipe == INVALID_HANDLE_VALUE)
+    if (hRequestPipe == INVALID_HANDLE_VALUE)
     {
-        std::cerr << "Nepodařilo se připojit na pipe." << std::endl;
+        std::cerr << "Unable to connect pipe." << std::endl;
         return 1;
     }
+    HANDLE hResponsePipe = CreateFileW(
+        L"\\\\.\\pipe\\SteamDlgResponsePipe",
+        GENERIC_WRITE,
+        0,
+        NULL,
+        OPEN_EXISTING,
+        0,
+        NULL);
 
+    if (hResponsePipe == INVALID_HANDLE_VALUE)
+    {
+        if (hRequestPipe == INVALID_HANDLE_VALUE)
+        {
+			CloseHandle(hRequestPipe);
+        }
+        std::cerr << "Unable to connect response pipe." << std::endl;
+		return 1;
+    }
 	// Send READY message to client - this indicates that the server is ready to process commands
     const char* ready = "READY";
-    WriteFile(hPipe, ready, (DWORD)strlen(ready), &bytesWritten, NULL);
-    
+    WriteFile(hResponsePipe, ready, (DWORD)strlen(ready), &bytesWritten, NULL);
+#ifdef _DEBUG
+	std::cout << "[server] Ready to process commands.\n";
+#endif
     bool steamInitialized = false;
 
     while (true) {
         DWORD available = 0;
-        if (!PeekNamedPipe(hPipe, NULL, 0, NULL, &available, NULL)) {
+        if (!PeekNamedPipe(hRequestPipe, NULL, 0, NULL, &available, NULL)) {
             std::cerr << "Pipe closed by client.\n";
             break;
         }
@@ -55,7 +75,7 @@ int main() {
             continue;
         }
 
-        if (!ReadFile(hPipe, buffer, sizeof(buffer) - 1, &bytesRead, NULL)) {
+        if (!ReadFile(hRequestPipe, buffer, sizeof(buffer) - 1, &bytesRead, NULL)) {
             DWORD err = GetLastError();
             std::cerr << "ReadFile error: " << err << "\n";
             break;
@@ -67,7 +87,9 @@ int main() {
         std::string input(buffer);
         auto tokens = TokenizeCommand(input);
         if (tokens.empty()) continue;
-
+#ifdef _DEBUG
+		std::cout << "[server] Received command: " << input << "\n";
+#endif
         std::string command = tokens[0];
         std::string response;
 
@@ -77,11 +99,11 @@ int main() {
                 response = R"([{"status":"connected"}])";
             }
             else {
-                response = R"([{"error":"SteamAPI_Init failed"}])";
+                response = R"([{"status":"SteamAPI_Init failed"}])";
             }
         }
-        else if (!IsSteamAPIInitialized()) {
-            response = R"([{"error":"SteamAPI not initialized"}])";
+        else if (!IsSteamAPIInitialized() && command != ".") {
+            response = R"([{"status":"SteamAPI not initialized"}])";
         }
         else if (command == "list") {
             response = GetFileListJSON();
@@ -100,23 +122,37 @@ int main() {
         }
         else if (command == "disconnect")
         {
-			if (IsSteamAPIInitialized()) ShutdownSteamAPI();
+            if (IsSteamAPIInitialized()) ShutdownSteamAPI();
             response = R"([{"status":"disconnected"}])";
         }
         else if (command == "exit") {
             response = R"([{"status":"shutting down"}])";
-            WriteFile(hPipe, response.c_str(), (DWORD)response.size(), &bytesWritten, NULL);
+            WriteFile(hResponsePipe, response.c_str(), (DWORD)response.size(), &bytesWritten, NULL);
             break;
+        }
+        else if (command == ".")
+        {
+			ping = true;
         }
         else {
             response = R"([{"error":"unknown command"}])";
         }
-
-        WriteFile(hPipe, response.c_str(), (DWORD)response.size(), &bytesWritten, NULL);
+        if(!ping)
+        {
+        WriteFile(hResponsePipe, response.c_str(), (DWORD)response.size(), &bytesWritten, NULL);
+#ifdef _DEBUG
+		std::cout << "[server] Response sent: " << response << "\n";
+#endif
+        }
+        else
+        {
+			ping = false;
+        }
     }
 
     if (IsSteamAPIInitialized()) ShutdownSteamAPI();
-    CloseHandle(hPipe);
+    CloseHandle(hResponsePipe);
+	CloseHandle(hRequestPipe);
     std::cout << "[server] Exiting\n";
     return 0;
 }
