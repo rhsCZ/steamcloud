@@ -6,6 +6,8 @@
 #define IDR_ICON                        128
 #define ID_MENU_MINIMIZE                129
 #define IDD_DIALOG1                     130
+#define IDR_WORKER                      132
+#define IDR_STEAMDLL				    133
 #define IDC_TRAYEN                      1000
 #define IDC_MINEN                       1001
 #define IDC_LISTFILES                   1002
@@ -31,7 +33,7 @@
 // 
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
-#define _APS_NEXT_RESOURCE_VALUE        132
+#define _APS_NEXT_RESOURCE_VALUE        134
 #define _APS_NEXT_COMMAND_VALUE         32774
 #define _APS_NEXT_CONTROL_VALUE         1018
 #define _APS_NEXT_SYMED_VALUE           102

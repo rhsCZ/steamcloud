@@ -2,18 +2,19 @@
 // hasher2Dlg.h : header file
 //
 #pragma once
-#include "steam/steam_api.h"
 #include "afxdialogex.h"
 #include "afxwin.h"
 #include <vector>
 #include <iostream>
 #include "functions.h"
+#include <sstream>
 #include <iterator>
 #include <algorithm>
 #include <map>
 #include <set>
-//#include <thread>
-//#include <fstream>
+#include "json.hpp"
+using json = nlohmann::json;
+
 using namespace std;
 #define MAX_UNICODE_PATH 32766
 #define bufferSize 10
@@ -38,7 +39,8 @@ template<size_t N>
 size_t get_data_size(const char(&data)[N]);
 template<typename T>
 size_t get_data_size(const T& data);
-// Chasher2Dlg dialog
+bool ExtractResourceToFile(HINSTANCE hInstance, LPCWSTR resourceName, LPCWSTR resourceType, const CString& outPath);
+
 class CsteamcloudDlg : public CDialog
 {
 private:
@@ -46,6 +48,10 @@ private:
 	BOOL			m_bTrayIconVisible;
 	CMenu			m_mnuTrayMenu;
 	UINT			m_nDefaultMenuItem;
+	std::map<CString, int64_t> m_fileSizesBytes;
+	uint64_t m_quotaUsed = 0;
+	uint64_t m_quotaTotal = 0;
+	uint64_t m_quotaAvailable = 0;
 	afx_msg LRESULT OnTrayNotify(WPARAM wParam, LPARAM lParam);
 // Construction
 public:
@@ -68,7 +74,7 @@ public:
 	virtual void OnTrayLButtonDblClk(CPoint pt);
 	virtual void OnTrayRButtonDown(CPoint pt);
 	virtual void OnTrayRButtonDblClk(CPoint pt);
-	virtual void OnTrayMouseMove(CPoint pt);	// standard constructor
+	virtual void OnTrayMouseMove(CPoint pt);
 
 // Dialog Data
 #ifdef AFX_DESIGN_TIME
@@ -77,10 +83,12 @@ public:
 
 	protected:
 	virtual void DoDataExchange(CDataExchange* pDX);	// DDX/DDV support
-	std::vector<CString> m_appidList;      // aktuální seznam
-	std::vector<CString> m_appidList_orig; // originál pøi naètení
+	std::vector<CString> m_appidList;
+	std::vector<CString> m_appidList_orig;
 	std::map<char, CString> m_appidMap;
 	string m_appList_keyOrder;
+	HANDLE m_hPipe = INVALID_HANDLE_VALUE;
+	HANDLE m_hWorkerProcess = NULL;
 	void LoadComboBoxHistory();
 	void SaveComboBoxHistory();
 	void UpdateAppIdHistoryFromInput();
@@ -123,17 +131,9 @@ public:
 	CButton* disconnect = nullptr;
 	CStatic* quota = nullptr;
 	CComboBox* inputappid = nullptr;
-	//CRect buttonrect = nullptr;
-	//CRgn buttonrgn = nullptr;
-	//CSteamAPIContext steam;
-	//HSteamPipe steampipe;
-	//HSteamUser steamuser;
-	//ISteamClient* steam;
-	//ISteamRemoteStorage* steamremote;
 	HKEY traykey = nullptr;
 	CListCtrl* listfiles = nullptr;
 	DWORD traykeyvalue = 0;
-	//LSTATUS error;
 	unsigned long type = 0;
 	DWORD keycreate = 0;
 	afx_msg void OnOpen();
@@ -141,7 +141,6 @@ public:
 	afx_msg void OnBnClickedMinEn();
 	afx_msg void OnBnClickedTrayEn();
 	PCHAR* CommandLineToArgvA(PCHAR CmdLine, int* _argc);
-	//bool ExtractResource(uint16_t ResourceID, char* OutputFileName, char* path, const char* ResType);
 	afx_msg void OnBnClickedConnect();
 	afx_msg void OnBnClickedDelete();
 	afx_msg void OnBnClickedUpload();
@@ -149,14 +148,13 @@ public:
 	afx_msg void OnBnClickedDownload();
 	void GetFiles();
 	void Clearlist();
-	//void OnSteamCallComplete(RemoteStorageFileWriteAsyncComplete_t _callback, bool _failure);
+	void UpdateFileSizesDisplay();
+	bool ReadFromPipeWithTimeout(DWORD timeoutMs, std::string& output);
 	afx_msg void OnBnClickedRefresh();
 	afx_msg void OnBnClickedDisconnect();
 	afx_msg void OnBnClickedBytes();
 	afx_msg void OnBnClickedKbytes();
 	afx_msg void OnBnClickedMbytes();
-//	afx_msg void OnBnClickedTestsave();
-//	afx_msg void OnBnClickedTestread();
 };
 
 static int RegCrtKey(HKEY key, LPSTR keyloc, REGSAM access)
@@ -193,34 +191,27 @@ static size_t get_data_size(const T& data)
 	return sizeof(T);
 }
 
-// char array (napø. char buf[64])
 template<size_t N>
 static size_t get_data_size(const char(&data)[N])
 {
-	return strlen(data) + 1; // vèetnì nul-terminátoru
+	return strlen(data) + 1;
 }
 
-// wchar_t array (napø. wchar_t buf[64])
 template<size_t N>
 static size_t get_data_size(const wchar_t(&data)[N])
 {
 	return (wcslen(data) + 1) * sizeof(wchar_t);
 }
 
-// std::string
 static size_t get_data_size(const std::string& s)
 {
-	return s.size() + 1; // + nulový terminátor
+	return s.size() + 1;
 }
 
-// std::wstring
 static size_t get_data_size(const std::wstring& s)
 {
 	return (s.size() + 1) * sizeof(wchar_t);
 }
-
-
-// --- Funkce pro zápis ---
 
 template<typename T>
 static bool RegSetKey(HKEY key, LPCSTR keyloc, DWORD type, REGSAM access, LPCSTR name, const T& indata)
@@ -231,11 +222,8 @@ static bool RegSetKey(HKEY key, LPCSTR keyloc, DWORD type, REGSAM access, LPCSTR
 		return false;
 
 	size_t size = get_data_size(indata);
-	// Pozor na pointer u stringù, pole apod.
 	const BYTE* dataPtr = reinterpret_cast<const BYTE*>(&indata);
 
-	// U std::string a wchar_t/char pole chceme pointer na data, ne na wrapper (napr. u std::string to není adresa objektu ale ukazatele na data)
-	// Takže pøetypování:
 	if constexpr (std::is_same_v<T, std::string>)
 		dataPtr = reinterpret_cast<const BYTE*>(indata.c_str());
 	else if constexpr (std::is_same_v<T, std::wstring>)
@@ -250,17 +238,13 @@ static bool RegSetKey(HKEY key, LPCSTR keyloc, DWORD type, REGSAM access, LPCSTR
 }
 
 
-// --- Funkce pro ètení ---
-// Poznámka: u polí je potøeba pøedat i velikost bufferu (max velikost, aby se nepøeteèelo),
-// pro stringy a základní typy alokujeme buffer automaticky
-
 template<typename T>
 static int RegGetKey(HKEY key, LPCSTR keyloc, DWORD type, REGSAM access, LPCSTR name, T& outdata)
 {
 	HKEY keyval = nullptr;
 	LONG err = RegOpenKeyExA(key, keyloc, 0, access, &keyval);
 	if (err != ERROR_SUCCESS)
-		return 0; // chyba
+		return 0;
 
 	DWORD dataType = 0;
 	DWORD dataSize = 0;
@@ -273,11 +257,10 @@ static int RegGetKey(HKEY key, LPCSTR keyloc, DWORD type, REGSAM access, LPCSTR 
 
 	if constexpr (std::is_same_v<T, std::string>)
 	{
-		// naèti do stringu
 		char* buffer = new char[dataSize];
 		err = RegQueryValueExA(keyval, name, NULL, NULL, reinterpret_cast<BYTE*>(buffer), &dataSize);
 		if (err == ERROR_SUCCESS)
-			outdata.assign(buffer, dataSize - 1); // bez nul. terminátoru
+			outdata.assign(buffer, dataSize - 1);
 		delete[] buffer;
 	}
 	else if constexpr (std::is_same_v<T, std::wstring>)
@@ -290,13 +273,10 @@ static int RegGetKey(HKEY key, LPCSTR keyloc, DWORD type, REGSAM access, LPCSTR 
 	}
 	else if constexpr (std::is_array_v<T> && (std::is_same_v<std::remove_extent_t<T>, char> || std::is_same_v<std::remove_extent_t<T>, wchar_t>))
 	{
-		// T je pole - naèteme pøímo do nìj
-		// Musíš zajistit, že buffer je dost velký!
 		err = RegQueryValueExA(keyval, name, NULL, NULL, reinterpret_cast<BYTE*>(outdata), &dataSize);
 	}
 	else
 	{
-		// základní typy - naèti pøímo
 		DWORD expectedSize = sizeof(T);
 		if (dataSize != expectedSize)
 		{
@@ -309,13 +289,13 @@ static int RegGetKey(HKEY key, LPCSTR keyloc, DWORD type, REGSAM access, LPCSTR 
 	RegCloseKey(keyval);
 
 	if (err == ERROR_SUCCESS)
-		return 1; // OK
+		return 1;
 	else if (err == ERROR_FILE_NOT_FOUND)
-		return 2; // nenalezeno
+		return 2;
 	else if (err == ERROR_MORE_DATA)
-		return 3; // buffer je pøíliš malý
+		return 3;
 	else
-		return 0; // jiná chyba
+		return 0;
 }
 template<size_t N>
 int RegGetKey(HKEY key, LPCSTR keyloc, DWORD type, REGSAM access, LPCSTR name, char(&outdata)[N]) {
@@ -344,4 +324,24 @@ bool RegSetKey(HKEY key, LPCSTR keyloc, DWORD type, REGSAM access, LPCSTR name, 
 	bool ok = RegSetValueExA(keyval, name, 0, type, reinterpret_cast<const BYTE*>(indata), size) == ERROR_SUCCESS;
 	CloseHandle(keyval);
 	return ok;
+}
+static bool ExtractResourceToFile(HINSTANCE hInstance, LPCWSTR resourceName, LPCWSTR resourceType, const CString& outPath)
+{
+	HRSRC hRes = FindResourceW(hInstance, resourceName, resourceType);
+	if (!hRes) return false;
+
+	DWORD size = SizeofResource(hInstance, hRes);
+	HGLOBAL hData = LoadResource(hInstance, hRes);
+	if (!hData) return false;
+
+	void* pData = LockResource(hData);
+	if (!pData) return false;
+
+	HANDLE hFile = CreateFileW(outPath, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (hFile == INVALID_HANDLE_VALUE) return false;
+
+	DWORD written = 0;
+	BOOL result = WriteFile(hFile, pData, size, &written, NULL);
+	CloseHandle(hFile);
+	return result && written == size;
 }

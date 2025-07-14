@@ -214,6 +214,9 @@
       <Filter>Resource Files</Filter>
     </None>
     <None Include="steam\steam_api.json" />
+    <None Include="..\steam-worker.exe" />
+    <None Include="steam_api64.dll" />
+    <None Include="steam_api.dll" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="res\cloud2.ico">

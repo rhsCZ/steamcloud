@@ -3,12 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.14.36203.30 d17.14
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "steamcloud", "steamcloud\steamcloud.vcxproj", "{94E2B8F7-AEDA-4379-B884-AE8D7EABDA28}"
-	ProjectSection(ProjectDependencies) = postProject
-		{2143C461-9078-4234-B53B-81AEC7DA08E2} = {2143C461-9078-4234-B53B-81AEC7DA08E2}
-	EndProjectSection
-EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "steam-worker", "steam-worker\steam-worker.vcxproj", "{2143C461-9078-4234-B53B-81AEC7DA08E2}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "steam-worker", "steam-worker.vcxproj", "{2143C461-9078-4234-B53B-81AEC7DA08E2}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -18,14 +13,6 @@ Global
 		Release|x86 = Release|x86
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{94E2B8F7-AEDA-4379-B884-AE8D7EABDA28}.Debug|x64.ActiveCfg = Debug|x64
-		{94E2B8F7-AEDA-4379-B884-AE8D7EABDA28}.Debug|x64.Build.0 = Debug|x64
-		{94E2B8F7-AEDA-4379-B884-AE8D7EABDA28}.Debug|x86.ActiveCfg = Debug|Win32
-		{94E2B8F7-AEDA-4379-B884-AE8D7EABDA28}.Debug|x86.Build.0 = Debug|Win32
-		{94E2B8F7-AEDA-4379-B884-AE8D7EABDA28}.Release|x64.ActiveCfg = Release|x64
-		{94E2B8F7-AEDA-4379-B884-AE8D7EABDA28}.Release|x64.Build.0 = Release|x64
-		{94E2B8F7-AEDA-4379-B884-AE8D7EABDA28}.Release|x86.ActiveCfg = Release|Win32
-		{94E2B8F7-AEDA-4379-B884-AE8D7EABDA28}.Release|x86.Build.0 = Release|Win32
 		{2143C461-9078-4234-B53B-81AEC7DA08E2}.Debug|x64.ActiveCfg = Debug|x64
 		{2143C461-9078-4234-B53B-81AEC7DA08E2}.Debug|x64.Build.0 = Debug|x64
 		{2143C461-9078-4234-B53B-81AEC7DA08E2}.Debug|x86.ActiveCfg = Debug|Win32
@@ -39,6 +26,6 @@ Global
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
-		SolutionGuid = {28D86FF6-7467-4D2A-BF85-0F36A03A09E3}
+		SolutionGuid = {16C781B3-04C9-4B8B-A865-5C483974D91C}
 	EndGlobalSection
 EndGlobal
