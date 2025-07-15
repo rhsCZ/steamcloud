@@ -342,6 +342,7 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ResourceCompile Include="rcdata.rc2" />
     <ResourceCompile Include="steamcloud.rc" />
   </ItemGroup>
   <ItemGroup>

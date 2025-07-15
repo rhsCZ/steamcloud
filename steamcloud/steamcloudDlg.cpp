@@ -90,16 +90,16 @@ void CsteamcloudDlg::GetFiles()
 {
 	if (active) return; // If another operation is in progress, do not proceed
 	active = true; // Set the flag to indicate an operation is in progress
+	thread([this]() {
+		
+		// Start the operation in a separate thread
 	if (!m_hResponsePipe || m_hResponsePipe == INVALID_HANDLE_VALUE) {
 		MessageBox(L"Pipe's not open.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
 		active = false; // Reset active flag
 		return;
 	}
 	bool empty = false;
-	Clearlist();
-	m_fileSizesBytes.clear();
 	
-
 	// 1. send "list" command
 	const char* cmdList = "list\n";
 	DWORD written = 0;
@@ -138,6 +138,7 @@ void CsteamcloudDlg::GetFiles()
 	}
 	if(!empty)
 	{ 
+		m_fileSizesBytes.clear();
 		int index = 0;
 		for (auto& [key, val] : j.items()) {
 			if (!val.is_object()) continue;
@@ -158,27 +159,6 @@ void CsteamcloudDlg::GetFiles()
 			m_fileSizesBytes[namecs] = size;
 			CString nameW(name.c_str());
 			CString sizeW, dateW;
-
-			// Size formatting based on sizeunit
-			switch (sizeunit) {
-			case 0: sizeW.Format(L"%d", size); break;
-			case 1: sizeW.Format(L"%.4f", (float)size / 1024); break;
-			case 2: sizeW.Format(L"%.4f", (float)size / (1024 * 1024)); break;
-			default: sizeW.Format(L"%d", size); break;
-			}
-
-			// Date formatting
-			wchar_t dateBuf[100] = {};
-			tm* timeinfo = localtime((time_t*)&timestamp);
-			wcsftime(dateBuf, sizeof(dateBuf) / sizeof(wchar_t), L"%e.%m.%Y %H:%M:%S", timeinfo);
-			dateW = dateBuf;
-
-			int Itemindex = listfiles->InsertItem(index, nameW);
-			listfiles->SetItemText(Itemindex, 1, dateW);
-			listfiles->SetItemText(Itemindex, 2, sizeW);
-			listfiles->SetItemText(Itemindex, 3, persisted ? L"true" : L"false");
-			listfiles->SetItemText(Itemindex, 4, exists ? L"true" : L"false");
-			listfiles->SetItemData(Itemindex, (DWORD_PTR)&m_fileRowData.back());
 			index++;
 		}
 		if (m_nSortedColumn >= 0)
@@ -226,32 +206,13 @@ void CsteamcloudDlg::GetFiles()
 
 	json quotaJson = quotaJsonArray[0];
 
-	uint64_t total = quotaJson.value("total", 0ULL);
-	uint64_t used = quotaJson.value("used", 0ULL);
-	uint64_t available = quotaJson.value("available", 0ULL);
-
-	m_quotaUsed = used;
-	m_quotaTotal = total;
-	m_quotaAvailable = available;
-
-	CString quotaText;
-	switch (sizeunit) {
-	case 0:
-		quotaText.Format(L"%llu/%llu Bytes used", used, total);
-		break;
-	case 1:
-		quotaText.Format(L"%.4f/%.4f KB used", (float)used / 1024, (float)total / 1024);
-		break;
-	case 2:
-		quotaText.Format(L"%.4f/%.4f MB used", (float)used / (1024 * 1024), (float)total / (1024 * 1024));
-		break;
-	default:
-		quotaText.Format(L"%llu/%llu Bytes used", used, total);
-		break;
-	}
-
-	SetDlgItemTextW(IDC_QUOTA, quotaText);
+	m_quotaUsed = quotaJson.value("used", 0ULL);
+	m_quotaTotal = quotaJson.value("total", 0ULL);
+	m_quotaAvailable = quotaJson.value("available", 0ULL);
+	PostMessage(WM_UPDATE_QUOTA, 0, 0); // Notify the dialog to update the quota display
+	PostMessage(WM_UPDATE_LIST, 0, 0); // Notify the dialog to update the list control
 	active = false; // Reset active flag
+	}).detach();
 }
 
 
@@ -327,7 +288,127 @@ BEGIN_MESSAGE_MAP(CsteamcloudDlg, CDialog)
 	ON_BN_CLICKED(IDC_KBYTES, &CsteamcloudDlg::OnBnClickedKbytes)
 	ON_BN_CLICKED(IDC_MBYTES, &CsteamcloudDlg::OnBnClickedMbytes)
 	ON_NOTIFY(LVN_COLUMNCLICK, IDC_LISTFILES, &CsteamcloudDlg::OnLvnColumnClickListFiles)
+	ON_MESSAGE(WM_UPDATE_LIST, &CsteamcloudDlg::OnUpdateList)
+	ON_MESSAGE(WM_UPDATE_QUOTA, &CsteamcloudDlg::OnUpdateQuota)
+	ON_MESSAGE(WM_ENABLE_CONTROL, &CsteamcloudDlg::OnEnableControl)
+	ON_MESSAGE(WM_DISABLE_CONTROL, &CsteamcloudDlg::OnDisableControl)
+	ON_MESSAGE(WM_CLEAR_LIST, &CsteamcloudDlg::OnClearList)
+	ON_MESSAGE(WM_UPDATE_COMBOBOX, &CsteamcloudDlg::OnUpdateComboBox)
 END_MESSAGE_MAP()
+
+LRESULT CsteamcloudDlg::OnUpdateList(WPARAM wParam, LPARAM lParam)
+{
+	RefreshListFromData();
+	return 0;
+}
+LRESULT CsteamcloudDlg::OnUpdateQuota(WPARAM wParam, LPARAM lParam)
+{
+	UpdateQuota();
+	return 0;
+}
+LRESULT CsteamcloudDlg::OnEnableControl(WPARAM wParam, LPARAM lParam)
+{
+	EnableControl();
+	return 0;
+}
+LRESULT CsteamcloudDlg::OnDisableControl(WPARAM wParam, LPARAM lParam)
+{
+	DisableControl();
+	return 0;
+}
+void CsteamcloudDlg::EnableControl()
+{
+	download->EnableWindow(1);
+	deletefile->EnableWindow(1);
+	upload->EnableWindow(1);
+	uploaddir->EnableWindow(1);
+	refresh->EnableWindow(1);
+	quota->ShowWindow(1);
+	disconnect->EnableWindow(1);
+}
+void CsteamcloudDlg::DisableControl()
+{
+	download->EnableWindow(0);
+	deletefile->EnableWindow(0);
+	upload->EnableWindow(0);
+	uploaddir->EnableWindow(0);
+	refresh->EnableWindow(0);
+	quota->ShowWindow(0);
+	disconnect->EnableWindow(0);
+}
+LRESULT CsteamcloudDlg::OnClearList(WPARAM wParam, LPARAM lParam)
+{
+	Clearlist();
+	return 0;
+}
+LRESULT CsteamcloudDlg::OnUpdateComboBox(WPARAM wParam, LPARAM lParam)
+{
+	UpdateAppIdHistoryFromInput();
+	SaveComboBoxHistory();
+	return 0;
+}
+void CsteamcloudDlg::UpdateQuota()
+{
+	uint64_t total = m_quotaTotal;
+	uint64_t used = m_quotaUsed;
+	uint64_t available = m_quotaAvailable;
+
+	CString quotaText;
+	switch (sizeunit) {
+	case 0:
+		quotaText.Format(L"%llu/%llu Bytes used", used, total);
+		break;
+	case 1:
+		quotaText.Format(L"%.4f/%.4f KB used", (float)used / 1024, (float)total / 1024);
+		break;
+	case 2:
+		quotaText.Format(L"%.4f/%.4f MB used", (float)used / (1024 * 1024), (float)total / (1024 * 1024));
+		break;
+	default:
+		quotaText.Format(L"%llu/%llu Bytes used", used, total);
+		break;
+	}
+	SetDlgItemTextW(IDC_QUOTA, quotaText);
+}
+
+
+void CsteamcloudDlg::RefreshListFromData()
+{
+	Clearlist();
+	for (int index = 0; index < m_fileRowData.size(); ++index)
+	{
+		const FileRow& row = m_fileRowData[index];
+
+		CString sizeStr, dateStr;
+
+		switch (sizeunit) {
+		case 0: sizeStr.Format(L"%d", row.size); break;
+		case 1: sizeStr.Format(L"%.4f", (float)row.size / 1024); break;
+		case 2: sizeStr.Format(L"%.4f", (float)row.size / (1024 * 1024)); break;
+		default: sizeStr.Format(L"%d", row.size); break;
+		}
+
+		wchar_t dateBuf[100] = {};
+		tm* timeinfo = localtime(&row.timestamp);
+		wcsftime(dateBuf, sizeof(dateBuf) / sizeof(wchar_t), L"%e.%m.%Y %H:%M:%S", timeinfo);
+		dateStr = dateBuf;
+
+		int itemIndex = listfiles->InsertItem(index, row.name);
+		listfiles->SetItemText(itemIndex, 1, dateStr);
+		listfiles->SetItemText(itemIndex, 2, sizeStr);
+		listfiles->SetItemText(itemIndex, 3, row.persisted ? L"true" : L"false");
+		listfiles->SetItemText(itemIndex, 4, row.exists ? L"true" : L"false");
+		listfiles->SetItemData(itemIndex, (DWORD_PTR)&m_fileRowData[index]);
+	}
+
+	if (m_nSortedColumn >= 0)
+	{
+		SortInfo info = { m_nSortedColumn, m_bSortAscending };
+		listfiles->SortItems(CompareFunc, (LPARAM)&info);
+	}
+}
+
+
 BOOL CsteamcloudDlg::OnNotify(WPARAM wParam, LPARAM lParam, LRESULT* pResult)
 {
 	// TODO: Add your specialized code here and/or call the base class
@@ -692,6 +773,12 @@ HCURSOR CsteamcloudDlg::OnQueryDragIcon()
 
 void CsteamcloudDlg::OnBnClickedExit()
 {
+	int starttime = GetTickCount64();
+	int maxwait = 5000; // timeout time to wait for threads to finish
+	while((GetTickCount64() - starttime) < maxwait)
+	{
+		Sleep(100); // Wait for finishing threads and actions
+	}
 	CsteamcloudDlg::OnDestroy();
 	PostQuitMessage(1);
 }
@@ -1180,6 +1267,8 @@ void CsteamcloudDlg::OnBnClickedConnect()
 {
 	if (active) return; // if another command is being processed, return immediately
 	active = true; // Set active flag to prevent multiple commands being processed at the same time
+	thread([this]() {
+		
 	if ((m_hWorkerProcess == NULL || m_hWorkerProcess == INVALID_HANDLE_VALUE) && (!m_ResponseThreadWaiting || !m_RequestThreadWaiting))
 	{
 		Sleep(300); // Ensure the pipes are ready.
@@ -1326,31 +1415,18 @@ void CsteamcloudDlg::OnBnClickedConnect()
 			std::string status = parsed[0].value("status", "");
 
 			if (status == "connected") {
-				UpdateAppIdHistoryFromInput();
-				SaveComboBoxHistory();
-				// Get files after successful connection
-				deletefile->EnableWindow();
-				upload->EnableWindow();
-				uploaddir->EnableWindow();
-				download->EnableWindow();
-				refresh->EnableWindow();
-				quota->ShowWindow(1);
-				disconnect->EnableWindow();
+				
+				PostMessage(WM_ENABLE_CONTROL, 0, 0); // Enable controls after successful connection
+				PostMessage(WM_UPDATE_COMBOBOX, 0, 0); // Update the AppID combo box
 				init = true;
 				active = false;
-				Clearlist();
 				GetFiles(); // Reset active flag
 				return;
 			}
 			else if (status == "SteamAPI_Init failed" || status == "SteamAPI not initialized") {
-				Clearlist();
-				download->EnableWindow(0);
-				deletefile->EnableWindow(0);
-				upload->EnableWindow(0);
-				uploaddir->EnableWindow(0);
-				refresh->EnableWindow(0);
-				quota->ShowWindow(0);
-				disconnect->EnableWindow(0);
+				
+				PostMessage(WM_DISABLE_CONTROL, 0, 0); // Disable controls if initialization failed
+				PostMessage(WM_CLEAR_LIST, 0, 0); // Clear the file list
 				init = false;
 				active = false; // Reset active flag
 				CString msg(status.c_str());
@@ -1359,14 +1435,8 @@ void CsteamcloudDlg::OnBnClickedConnect()
 			}
 		}
 		// If we reach here, it means the response is not in the expected format
-		Clearlist();
-		download->EnableWindow(0);
-		deletefile->EnableWindow(0);
-		upload->EnableWindow(0);
-		uploaddir->EnableWindow(0);
-		refresh->EnableWindow(0);
-		quota->ShowWindow(0);
-		disconnect->EnableWindow(0);
+		PostMessage(WM_DISABLE_CONTROL, 0, 0); // Disable controls if initialization failed
+		PostMessage(WM_CLEAR_LIST, 0, 0); // Clear the file list
 		init = false;
 		active = false; // Reset active flag
 		CString jsonStr(response.c_str());
@@ -1374,14 +1444,8 @@ void CsteamcloudDlg::OnBnClickedConnect()
 		return;
 	}
 	catch (const std::exception& e) {
-		Clearlist();
-		download->EnableWindow(0);
-		deletefile->EnableWindow(0);
-		upload->EnableWindow(0);
-		uploaddir->EnableWindow(0);
-		refresh->EnableWindow(0);
-		quota->ShowWindow(0);
-		disconnect->EnableWindow(0);
+		PostMessage(WM_DISABLE_CONTROL, 0, 0); // Disable controls if initialization failed
+		PostMessage(WM_CLEAR_LIST, 0, 0); // Clear the file list
 		init = false;
 		active = false; // Reset active flag
 		CString msg;
@@ -1389,6 +1453,7 @@ void CsteamcloudDlg::OnBnClickedConnect()
 		MessageBox(msg, L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
 		return;
 	}
+	}).detach(); // Detach the thread to allow it to run independently
 }
 
 
@@ -1495,6 +1560,9 @@ void CsteamcloudDlg::OnBnClickedUpload()
 {
 	if (active) return; // if another command is being processed, return immediately
 	active = true; // Set active flag to prevent multiple commands being processed at the same time
+	thread([this]() {
+		
+		
 	if (!init)
 	{
 		// this should not happen, but just in case
@@ -1653,8 +1721,8 @@ void CsteamcloudDlg::OnBnClickedUpload()
 	}
 
 	active = false; // Reset active flag
-	Clearlist();
 	GetFiles();
+	}).detach();
 }
 
 
@@ -1663,6 +1731,7 @@ void CsteamcloudDlg::OnBnClickedDirupload()
 {
 	if (active) return; // if another command is being processed, return immediately
 	active = true; // Set active flag to prevent multiple commands being processed at the same time
+	thread([this] {
 	if (!init)
 	{
 		// this should not happen, but just in case
@@ -1836,170 +1905,171 @@ void CsteamcloudDlg::OnBnClickedDirupload()
 		}
 	}
 	active = false; // Reset active flag
-	Clearlist();
-	GetFiles();
-	Sleep(1);
+	GetFiles(); // Refresh the file list after upload
+	}).detach();
 }
 
 void CsteamcloudDlg::OnBnClickedDownload()
 {
 	if (active) return; // if another command is being processed, return immediately
 	active = true; // Set active flag to prevent multiple commands being processed at the same time
-	if (!init)
-	{
-		// this should not happen, but just in case
-		MessageBox(L"Please connect to Steam first!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		active = false; // Reset active flag
-		return;
-	}
-	constexpr int MAX_SELECTED = 10;
-	int selectedIndices[MAX_SELECTED];
-	int count = 0;
-
-	// Get selected items from the list control
-	POSITION pos = listfiles->GetFirstSelectedItemPosition();
-	while (pos && count < MAX_SELECTED)
-	{
-		int index = listfiles->GetNextSelectedItem(pos);
-		selectedIndices[count++] = index;
-	}
-
-	if (count == 0)
-	{
-		MessageBox(L"No file is selected! Please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		active = false; // Reset active flag
-		return;
-	}
-
-	std::vector<CString> cloudPaths;
-	std::vector<CString> outputPaths;
-	CString targetDirectory;
-
-	// If only one file is selected, prefill filename and ask for output path
-	if (count == 1)
-	{
-		CString cloudPath = listfiles->GetItemText(selectedIndices[0], 0);
-		CString fileName = cloudPath.Mid(cloudPath.ReverseFind(L'/') + 1);
-
-		CFileDialog filedialog(FALSE, NULL, fileName, OFN_OVERWRITEPROMPT | OFN_HIDEREADONLY, L"All Files (*.*)|*.*||");
-		if (filedialog.DoModal() != IDOK) {
+	thread([this]() {
+		if (!init)
+		{
+			// this should not happen, but just in case
+			MessageBox(L"Please connect to Steam first!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
 			active = false; // Reset active flag
 			return;
 		}
-		CString fullOutput = filedialog.GetPathName();
-		cloudPaths.push_back(cloudPath);
-		outputPaths.push_back(fullOutput);
-	}
-	else
-	{
-		// If multiple files are selected, ask for target directory
-		CFolderPickerDialog dialog(NULL, OFN_EXPLORER | OFN_NONETWORKBUTTON | OFN_PATHMUSTEXIST | OFN_CREATEPROMPT, this);
-		if (dialog.DoModal() != IDOK) {
+		constexpr int MAX_SELECTED = 10;
+		int selectedIndices[MAX_SELECTED];
+		int count = 0;
+
+		// Get selected items from the list control
+		POSITION pos = listfiles->GetFirstSelectedItemPosition();
+		while (pos && count < MAX_SELECTED)
+		{
+			int index = listfiles->GetNextSelectedItem(pos);
+			selectedIndices[count++] = index;
+		}
+
+		if (count == 0)
+		{
+			MessageBox(L"No file is selected! Please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
 			active = false; // Reset active flag
 			return;
 		}
-		targetDirectory = dialog.GetFolderPath();
 
+		std::vector<CString> cloudPaths;
+		std::vector<CString> outputPaths;
+		CString targetDirectory;
+
+		// If only one file is selected, prefill filename and ask for output path
+		if (count == 1)
+		{
+			CString cloudPath = listfiles->GetItemText(selectedIndices[0], 0);
+			CString fileName = cloudPath.Mid(cloudPath.ReverseFind(L'/') + 1);
+
+			CFileDialog filedialog(FALSE, NULL, fileName, OFN_OVERWRITEPROMPT | OFN_HIDEREADONLY, L"All Files (*.*)|*.*||");
+			if (filedialog.DoModal() != IDOK) {
+				active = false; // Reset active flag
+				return;
+			}
+			CString fullOutput = filedialog.GetPathName();
+			cloudPaths.push_back(cloudPath);
+			outputPaths.push_back(fullOutput);
+		}
+		else
+		{
+			// If multiple files are selected, ask for target directory
+			CFolderPickerDialog dialog(NULL, OFN_EXPLORER | OFN_NONETWORKBUTTON | OFN_PATHMUSTEXIST | OFN_CREATEPROMPT, this);
+			if (dialog.DoModal() != IDOK) {
+				active = false; // Reset active flag
+				return;
+			}
+			targetDirectory = dialog.GetFolderPath();
+
+			for (int i = 0; i < count; ++i)
+			{
+				CString cloudPath = listfiles->GetItemText(selectedIndices[i], 0);
+				CString fileName = cloudPath.Mid(cloudPath.ReverseFind(L'/') + 1);
+				CString fullPath = targetDirectory + L"\\" + fileName;
+
+				cloudPaths.push_back(cloudPath);
+				outputPaths.push_back(fullPath);
+			}
+		}
+
+		// making download command with args
+		std::stringstream ss;
+		ss << "download ";
 		for (int i = 0; i < count; ++i)
 		{
-			CString cloudPath = listfiles->GetItemText(selectedIndices[i], 0);
-			CString fileName = cloudPath.Mid(cloudPath.ReverseFind(L'/') + 1);
-			CString fullPath = targetDirectory + L"\\" + fileName;
-
-			cloudPaths.push_back(cloudPath);
-			outputPaths.push_back(fullPath);
+			CT2A path(cloudPaths[i]);
+			ss << path;
+			if (i < count - 1)
+				ss << ";";
 		}
-	}
-
-	// making download command with args
-	std::stringstream ss;
-	ss << "download ";
-	for (int i = 0; i < count; ++i)
-	{
-		CT2A path(cloudPaths[i]);
-		ss << path;
-		if (i < count - 1)
-			ss << ";";
-	}
-	ss << ";";
-	if (count == 1)
-	{
-		CT2A output(outputPaths[0]);
-		ss << output;
-	}
-	else
-	{
-		CT2A output(targetDirectory);
-		ss << output;
-	}
-	std::string cmd = ss.str();
-
-	// sending command to worker
-	DWORD bytesWritten = 0;
-	while (pipeblocked)
-	{
-		Sleep(100); // Wait until the pipe is not blocked
-	}
-	pipeblocked = true; // Set the flag to indicate the pipe is blocked
-	if (!WriteFile(m_hRequestPipe, cmd.c_str(), (DWORD)cmd.length(), &bytesWritten, NULL))
-	{
-		pipeblocked = false; // Reset the flag
-		MessageBox(L"Unable to write to pipe", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		active = false; // Reset active flag
-		return;
-	}
-	pipeblocked = false; // Reset the flag
-	// Reading response from worker
-	std::string response;
-	if (!ReadFromPipeWithTimeout(10000, response))
-	{
-		MessageBox(L"Unable to get answer from worker.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		active = false; // Reset active flag
-		return;
-	}
-	//ss
-	try
-	{
-		using json = nlohmann::json;
-		json result = json::parse(response);
-
-		if (result.is_array() && result.empty()) {
-			active = false; // Reset active flag
-			return; // Don't display anything if the array is empty
-		}
-		CString statusMsg;
-		for (const auto& item : result)
+		ss << ";";
+		if (count == 1)
 		{
-			CString name = CA2W(item.value("name", "").c_str());
-			CString status = CA2W(item.value("status", "").c_str());
-			int size = item.value("size", 0);
+			CT2A output(outputPaths[0]);
+			ss << output;
+		}
+		else
+		{
+			CT2A output(targetDirectory);
+			ss << output;
+		}
+		std::string cmd = ss.str();
 
-			if (status.IsEmpty())
+		// sending command to worker
+		DWORD bytesWritten = 0;
+		while (pipeblocked)
+		{
+			Sleep(100); // Wait until the pipe is not blocked
+		}
+		pipeblocked = true; // Set the flag to indicate the pipe is blocked
+		if (!WriteFile(m_hRequestPipe, cmd.c_str(), (DWORD)cmd.length(), &bytesWritten, NULL))
+		{
+			pipeblocked = false; // Reset the flag
+			MessageBox(L"Unable to write to pipe", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			active = false; // Reset active flag
+			return;
+		}
+		pipeblocked = false; // Reset the flag
+		// Reading response from worker
+		std::string response;
+		if (!ReadFromPipeWithTimeout(10000, response))
+		{
+			MessageBox(L"Unable to get answer from worker.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			active = false; // Reset active flag
+			return;
+		}
+		//ss
+		try
+		{
+			using json = nlohmann::json;
+			json result = json::parse(response);
+
+			if (result.is_array() && result.empty()) {
+				active = false; // Reset active flag
+				return; // Don't display anything if the array is empty
+			}
+			CString statusMsg;
+			for (const auto& item : result)
 			{
-				// If status is empty, check for error
-				if (item.contains("error"))
+				CString name = CA2W(item.value("name", "").c_str());
+				CString status = CA2W(item.value("status", "").c_str());
+				int size = item.value("size", 0);
+
+				if (status.IsEmpty())
 				{
-					CString error = CA2W(item["error"].get<std::string>().c_str());
-					statusMsg += name + L": " + error + L"\r\n";
+					// If status is empty, check for error
+					if (item.contains("error"))
+					{
+						CString error = CA2W(item["error"].get<std::string>().c_str());
+						statusMsg += name + L": " + error + L"\r\n";
+					}
+					else
+					{
+						statusMsg += name + L": unknown status\r\n";
+					}
 				}
 				else
 				{
-					statusMsg += name + L": unknown status\r\n";
+					statusMsg += name + L": " + status + L" (" + std::to_wstring(size).c_str() + L" bytes)\r\n";
 				}
 			}
-			else
-			{
-				statusMsg += name + L": " + status + L" (" + std::to_wstring(size).c_str() + L" bytes)\r\n";
-			}
-		}
 
-		MessageBox(statusMsg, L"Download status", MB_OK | MB_TOPMOST);
-	}
-	catch (...)
-	{
-		MessageBox(L"Error on parsing JSON response.", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-	}
-	active = false; // Reset active flag
+			MessageBox(statusMsg, L"Download status", MB_OK | MB_TOPMOST);
+		}
+		catch (...)
+		{
+			MessageBox(L"Error on parsing JSON response.", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		}
+		active = false; // Reset active flag
+	}).detach();
 }
 
 DWORD CsteamcloudDlg::GetProcessPIDByName(const wchar_t* name) //Search Process ID by Name
@@ -2065,7 +2135,6 @@ void CsteamcloudDlg::OnBnClickedRefresh()
 		MessageBox(L"Please connect to Steam first!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
 		return;
 	}
-	Clearlist();
 	GetFiles();
 }
 

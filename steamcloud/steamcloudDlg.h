@@ -17,6 +17,12 @@
 #include "json.hpp"
 using json = nlohmann::json;
 using namespace std;
+#define WM_UPDATE_LIST (WM_USER + 101)
+#define WM_UPDATE_QUOTA (WM_USER + 102)
+#define WM_ENABLE_CONTROL (WM_USER + 103)
+#define WM_DISABLE_CONTROL (WM_USER + 104)
+#define WM_CLEAR_LIST (WM_USER + 105)
+#define WM_UPDATE_COMBOBOX (WM_USER + 106)
 #define MAX_UNICODE_PATH 32766
 #define bufferSize 10
 #define WM_SHOWPAGE WM_APP+2
@@ -90,6 +96,17 @@ private:
 	static int CALLBACK CompareFunc(LPARAM lParam1, LPARAM lParam2, LPARAM lParamSort);
 	DWORD GetProcessPIDByName(const wchar_t* name);
 	void KillAllSteamWorkerProcesses();
+	LRESULT OnUpdateList(WPARAM wParam, LPARAM lParam);
+	void RefreshListFromData();
+	LRESULT OnUpdateQuota(WPARAM wParam, LPARAM lParam);
+	void UpdateQuota();
+	LRESULT OnEnableControl(WPARAM wParam, LPARAM lParam);
+	LRESULT OnDisableControl(WPARAM wParam, LPARAM lParam);
+	void EnableControl();
+	void DisableControl();
+	LRESULT OnClearList(WPARAM wParam, LPARAM lParam);
+	LRESULT OnUpdateComboBox(WPARAM wParam, LPARAM lParam);
+
 // Construction
 public:
 	NOTIFYICONDATA	m_nidIconData;
