@@ -88,8 +88,11 @@ bool CsteamcloudDlg::ReadFromPipeWithTimeout(DWORD timeoutMs, std::string& outpu
 }
 void CsteamcloudDlg::GetFiles()
 {
+	if (active) return; // If another operation is in progress, do not proceed
+	active = true; // Set the flag to indicate an operation is in progress
 	if (!m_hResponsePipe || m_hResponsePipe == INVALID_HANDLE_VALUE) {
 		MessageBox(L"Pipe's not open.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		active = false; // Reset active flag
 		return;
 	}
 	bool empty = false;
@@ -108,12 +111,14 @@ void CsteamcloudDlg::GetFiles()
 	if (!WriteFile(m_hRequestPipe, cmdList, (DWORD)strlen(cmdList), &written, NULL)) {
 		pipeblocked = false; // Reset the flag if write fails
 		MessageBox(L"Unable to write 'list to pipe'", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		active = false; // Reset active flag
 		return;
 	}
 	pipeblocked = false; // Reset the flag after writing
 	std::string listJsonStr;
 	if (!ReadFromPipeWithTimeout(10000, listJsonStr)) {
 		MessageBox(L"Timeout(10s) when reading result from pipe(list).", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		active = false; // Reset active flag
 		return;
 	}
 
@@ -124,6 +129,7 @@ void CsteamcloudDlg::GetFiles()
 	}
 	catch (...) {
 		MessageBox(L"Error on parsing JSON result from pipe(list)", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		active = false; // Reset active flag
 		return;
 	}
 
@@ -191,12 +197,14 @@ void CsteamcloudDlg::GetFiles()
 	if (!WriteFile(m_hRequestPipe, cmdQuota, (DWORD)strlen(cmdQuota), &written, NULL)) {
 		pipeblocked = false; // Reset the flag if write fails
 		MessageBox(L"Cannot write the 'quota' command to pipe.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		active = false; // Reset active flag
 		return;
 	}
 	pipeblocked = false; // Reset the flag after writing
 	std::string quotaJsonStr;
 	if (!ReadFromPipeWithTimeout(5000, quotaJsonStr)) {
 		MessageBox(L"Response read timeout (quota).", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		active = false; // Reset active flag
 		return;
 	}
 
@@ -206,11 +214,13 @@ void CsteamcloudDlg::GetFiles()
 	}
 	catch (...) {
 		MessageBox(L"Error parsing JSON response (quota).", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		active = false; // Reset active flag
 		return;
 	}
 
 	if (!quotaJsonArray.is_array() || quotaJsonArray.empty()) {
 		MessageBox(L"Invalid quota response format.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		active = false; // Reset active flag
 		return;
 	}
 
@@ -241,6 +251,7 @@ void CsteamcloudDlg::GetFiles()
 	}
 
 	SetDlgItemTextW(IDC_QUOTA, quotaText);
+	active = false; // Reset active flag
 }
 
 
@@ -1167,12 +1178,15 @@ PCHAR* CsteamcloudDlg::CommandLineToArgvA(PCHAR CmdLine,int* _argc)
 
 void CsteamcloudDlg::OnBnClickedConnect()
 {
+	if (active) return; // if another command is being processed, return immediately
+	active = true; // Set active flag to prevent multiple commands being processed at the same time
 	if ((m_hWorkerProcess == NULL || m_hWorkerProcess == INVALID_HANDLE_VALUE) && (!m_ResponseThreadWaiting || !m_RequestThreadWaiting))
 	{
 		Sleep(300); // Ensure the pipes are ready.
 		if (!m_ResponseThreadWaiting || !m_RequestThreadWaiting)
 		{
 			MessageBox(L"Pipe threads are not ready, please try again later.", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			active = false; // Reset active flag
 			return;
 		}
 	}
@@ -1183,17 +1197,20 @@ void CsteamcloudDlg::OnBnClickedConnect()
 	appidStr.Trim();
 	if (appidStr.IsEmpty()) {
 		MessageBox(L"App ID is empty, please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		active = false; // Reset active flag
 		return;
 	}
 	for (int i = 0; i < appidStr.GetLength(); ++i) {
 		if (!isdigit(appidStr[i])) {
 			MessageBox(L"App ID must be a number!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			active = false; // Reset active flag
 			return;
 		}
 	}
 	int appid = _wtoi(appidStr);
 	if (appid < 1) {
 		MessageBox(L"App ID must be greater than 0!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		active = false; // Reset active flag
 		return;
 	}
 
@@ -1204,14 +1221,15 @@ void CsteamcloudDlg::OnBnClickedConnect()
 			KillAllSteamWorkerProcesses(); // Ensure no other worker processes are running
 			if(GetProcessPIDByName(L"steam-worker.exe") != 0) {
 				MessageBox(L"Unable to kill steam-worker.exe process. Please try terminate it or restart PC.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+				active = false; // Reset active flag
 				return;
 			}
-			return;
 		}
 		// Get TEMP path
 		WCHAR tempPath[MAX_PATH];
 		if (!GetEnvironmentVariableW(L"TEMP", tempPath, MAX_PATH)) {
 			MessageBox(L"Cannot get TEMP path.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			active = false; // Reset active flag
 			return;
 		}
 		CString workerPath = CString(tempPath) + L"\\steam-worker.exe";
@@ -1228,6 +1246,8 @@ void CsteamcloudDlg::OnBnClickedConnect()
 		}
 		if (!ExtractResourceToFile(AfxGetInstanceHandle(), MAKEINTRESOURCE(IDR_WORKER), RT_RCDATA, workerPath)) {
 			MessageBox(L"Unable to extract steam-worker.exe!", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			DeleteFileW(workerPath); // Clean up the worker executable if extraction fails
+			active = false; // Reset active flag
 			return;
 		}
 		if (!PathFileExistsW(dllPath)) {
@@ -1235,6 +1255,8 @@ void CsteamcloudDlg::OnBnClickedConnect()
 		}
 		if (!ExtractResourceToFile(AfxGetInstanceHandle(), MAKEINTRESOURCE(IDR_STEAMDLL), RT_RCDATA, dllPath)) {
 			MessageBox(L"Cannot extract steam_api DLL!", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			DeleteFileW(workerPath); // Clean up the worker executable if DLL extraction fails
+			active = false; // Reset active flag
 			return;
 		}
 
@@ -1243,6 +1265,7 @@ void CsteamcloudDlg::OnBnClickedConnect()
 		STARTUPINFOW si = { sizeof(si) };
 		if (!CreateProcessW(workerPath, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
 			MessageBox(L"Failed to start steam-worker.exe", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			active = false; // Reset active flag
 			return;
 		}
 		m_hWorkerProcess = pi.hProcess;
@@ -1258,6 +1281,7 @@ void CsteamcloudDlg::OnBnClickedConnect()
 			TerminateProcess(m_hWorkerProcess, 1);
 			CloseHandle(m_hWorkerProcess);
 			m_hWorkerProcess = NULL;
+			active = false; // Reset active flag
 			return;
 		}
 
@@ -1267,6 +1291,7 @@ void CsteamcloudDlg::OnBnClickedConnect()
 			TerminateProcess(m_hWorkerProcess, 1);
 			CloseHandle(m_hWorkerProcess);
 			m_hWorkerProcess = NULL;
+			active = false; // Reset active flag
 			return;
 		}
 	}
@@ -1282,6 +1307,7 @@ void CsteamcloudDlg::OnBnClickedConnect()
 	if (!WriteFile(m_hRequestPipe, cmd.c_str(), (DWORD)cmd.length(), &bytesWritten, NULL)) {
 		pipeblocked = false; // Reset the flag
 		MessageBox(L"Can't write to pipe.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		active = false; // Reset active flag
 		return;
 	}
 	pipeblocked = false; // Reset the flag
@@ -1291,6 +1317,7 @@ void CsteamcloudDlg::OnBnClickedConnect()
 	{
 		// If we reach here and gotReply is still false, it means we timed out waiting for a reply
 		MessageBox(L"No response from worker", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		active = false; // Reset active flag
 		return;
 	}
 
@@ -1312,6 +1339,7 @@ void CsteamcloudDlg::OnBnClickedConnect()
 				quota->ShowWindow(1);
 				disconnect->EnableWindow();
 				init = true;
+				active = false; // Reset active flag
 				return;
 			}
 			else if (status == "SteamAPI_Init failed" || status == "SteamAPI not initialized") {
@@ -1324,6 +1352,7 @@ void CsteamcloudDlg::OnBnClickedConnect()
 				quota->ShowWindow(0);
 				disconnect->EnableWindow(0);
 				init = false;
+				active = false; // Reset active flag
 				CString msg(status.c_str());
 				MessageBox(msg, L"SteamAPI Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
 				return;
@@ -1339,6 +1368,7 @@ void CsteamcloudDlg::OnBnClickedConnect()
 		quota->ShowWindow(0);
 		disconnect->EnableWindow(0);
 		init = false;
+		active = false; // Reset active flag
 		CString jsonStr(response.c_str());
 		MessageBox(jsonStr, L"Worker Response", MB_OK | MB_ICONERROR | MB_TOPMOST);
 		return;
@@ -1353,6 +1383,7 @@ void CsteamcloudDlg::OnBnClickedConnect()
 		quota->ShowWindow(0);
 		disconnect->EnableWindow(0);
 		init = false;
+		active = false; // Reset active flag
 		CString msg;
 		msg.Format(L"Error when parsing JSON: %S", e.what());
 		MessageBox(msg, L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
@@ -1363,10 +1394,13 @@ void CsteamcloudDlg::OnBnClickedConnect()
 
 void CsteamcloudDlg::OnBnClickedDelete()
 {
+	if (!active) return; // if another command is being processed, return immediately
+	active = true; // Set active flag to prevent multiple commands being processed at the same time
 	if(!init)
 	{
 		// this should not happen, but just in case
 		MessageBox(L"Please connect to Steam first!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		active = false; // Reset active flag
 		return;
 	}
 	int files[25] = { -1 };
@@ -1377,6 +1411,7 @@ void CsteamcloudDlg::OnBnClickedDelete()
 	if (pos == NULL)
 	{
 		MessageBox(L"No file is selected! Please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		active = false; // Reset active flag
 		return;
 	}
 
@@ -1410,6 +1445,7 @@ void CsteamcloudDlg::OnBnClickedDelete()
 	{
 		pipeblocked = false; // Reset the flag
 		MessageBox(L"Failed to send delete command to worker!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		active = false; // Reset active flag
 		return;
 	}
 	pipeblocked = false; // Reset the flag
@@ -1418,6 +1454,7 @@ void CsteamcloudDlg::OnBnClickedDelete()
 	if (!ReadFromPipeWithTimeout(5000, output))
 	{
 		MessageBox(L"Timeout while waiting for delete response!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		active = false; // Reset active flag
 		return;
 	}
 
@@ -1427,9 +1464,10 @@ void CsteamcloudDlg::OnBnClickedDelete()
 	try {
 		auto j = json::parse(output);
 
-		if (j.is_array() && j.empty())
+		if (j.is_array() && j.empty()) {
+			active = false; // Reset active flag
 			return; // Do not show a message box if no files were deleted
-
+		}
 		for (auto& entry : j)
 		{
 			std::string name = entry.value("name", "");
@@ -1443,17 +1481,20 @@ void CsteamcloudDlg::OnBnClickedDelete()
 		CString err;
 		err.Format(L"Failed to parse JSON: %S", e.what());
 		MessageBox(err, L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		active = false; // Reset active flag
 		return;
 	}
-
-	MessageBox(result, L"Delete result", MB_OK | MB_TOPMOST);
+	active = false; // Reset active flag
 	Clearlist();
 	GetFiles();
+	MessageBox(result, L"Delete result", MB_OK | MB_TOPMOST);
 }
 
 
 void CsteamcloudDlg::OnBnClickedUpload()
 {
+	if (!active) return; // if another command is being processed, return immediately
+	active = true; // Set active flag to prevent multiple commands being processed at the same time
 	if (!init)
 	{
 		// this should not happen, but just in case
@@ -1485,6 +1526,7 @@ void CsteamcloudDlg::OnBnClickedUpload()
 	INT_PTR ressss = dlg.DoModal();
 	if (ressss != IDOK)
 	{ 
+		active = false; // Reset active flag
 		return;
 	}
 	// Get the selected files and directory
@@ -1558,6 +1600,7 @@ void CsteamcloudDlg::OnBnClickedUpload()
 	if (!WriteFile(m_hRequestPipe, commandStr.c_str(), (DWORD)commandStr.size(), &bytesWritten, NULL))
 	{
 		pipeblocked = false; // Reset the flag
+		active = false; // Reset active flag
 		MessageBox(L"Unable to write to pipe!", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
 		return;
 	}
@@ -1566,6 +1609,7 @@ void CsteamcloudDlg::OnBnClickedUpload()
 	std::string output;
 	if (!ReadFromPipeWithTimeout(10000, output))
 	{
+		active = false; // Reset active flag
 		MessageBox(L"Unable to read response from pipe.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
 		return;
 	}
@@ -1599,6 +1643,7 @@ void CsteamcloudDlg::OnBnClickedUpload()
 		}
 	}
 	catch (...) {
+		active = false; // Reset active flag
 		MessageBox(L"Answer from worker is not valid JSON!", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
 		return;
 	}
@@ -1607,7 +1652,7 @@ void CsteamcloudDlg::OnBnClickedUpload()
 		MessageBox(msg, L"Upload results", MB_OK | MB_TOPMOST);
 	}
 
-
+	active = false; // Reset active flag
 	Clearlist();
 	GetFiles();
 }
@@ -1616,10 +1661,13 @@ void CsteamcloudDlg::OnBnClickedUpload()
 
 void CsteamcloudDlg::OnBnClickedDirupload()
 {
+	if (!active) return; // if another command is being processed, return immediately
+	active = true; // Set active flag to prevent multiple commands being processed at the same time
 	if (!init)
 	{
 		// this should not happen, but just in case
 		MessageBox(L"Please connect to Steam first!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		active = false; // Reset active flag
 		return;
 	}
 	bool emptydir = true;
@@ -1736,6 +1784,7 @@ void CsteamcloudDlg::OnBnClickedDirupload()
 			{
 				pipeblocked = false; // Reset the flag
 				MessageBox(L"Unable to write to pipe!", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+				active = false; // Reset active flag
 				return;
 			}
 			pipeblocked = false; // Reset the flag
@@ -1743,6 +1792,7 @@ void CsteamcloudDlg::OnBnClickedDirupload()
 			if (!ReadFromPipeWithTimeout(5000, response))
 			{
 				MessageBox(L"Timeout while uploading files", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+				active = false; // Reset active flag
 				return;
 			}
 
@@ -1785,7 +1835,7 @@ void CsteamcloudDlg::OnBnClickedDirupload()
 			}
 		}
 	}
-
+	active = false; // Reset active flag
 	Clearlist();
 	GetFiles();
 	Sleep(1);
@@ -1793,10 +1843,13 @@ void CsteamcloudDlg::OnBnClickedDirupload()
 
 void CsteamcloudDlg::OnBnClickedDownload()
 {
+	if (!active) return; // if another command is being processed, return immediately
+	active = true; // Set active flag to prevent multiple commands being processed at the same time
 	if (!init)
 	{
 		// this should not happen, but just in case
 		MessageBox(L"Please connect to Steam first!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		active = false; // Reset active flag
 		return;
 	}
 	constexpr int MAX_SELECTED = 10;
@@ -1814,6 +1867,7 @@ void CsteamcloudDlg::OnBnClickedDownload()
 	if (count == 0)
 	{
 		MessageBox(L"No file is selected! Please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		active = false; // Reset active flag
 		return;
 	}
 
@@ -1828,9 +1882,10 @@ void CsteamcloudDlg::OnBnClickedDownload()
 		CString fileName = cloudPath.Mid(cloudPath.ReverseFind(L'/') + 1);
 
 		CFileDialog filedialog(FALSE, NULL, fileName, OFN_OVERWRITEPROMPT | OFN_HIDEREADONLY, L"All Files (*.*)|*.*||");
-		if (filedialog.DoModal() != IDOK)
+		if (filedialog.DoModal() != IDOK) {
+			active = false; // Reset active flag
 			return;
-
+		}
 		CString fullOutput = filedialog.GetPathName();
 		cloudPaths.push_back(cloudPath);
 		outputPaths.push_back(fullOutput);
@@ -1839,9 +1894,10 @@ void CsteamcloudDlg::OnBnClickedDownload()
 	{
 		// If multiple files are selected, ask for target directory
 		CFolderPickerDialog dialog(NULL, OFN_EXPLORER | OFN_NONETWORKBUTTON | OFN_PATHMUSTEXIST | OFN_CREATEPROMPT, this);
-		if (dialog.DoModal() != IDOK)
+		if (dialog.DoModal() != IDOK) {
+			active = false; // Reset active flag
 			return;
-
+		}
 		targetDirectory = dialog.GetFolderPath();
 
 		for (int i = 0; i < count; ++i)
@@ -1889,6 +1945,7 @@ void CsteamcloudDlg::OnBnClickedDownload()
 	{
 		pipeblocked = false; // Reset the flag
 		MessageBox(L"Unable to write to pipe", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		active = false; // Reset active flag
 		return;
 	}
 	pipeblocked = false; // Reset the flag
@@ -1897,6 +1954,7 @@ void CsteamcloudDlg::OnBnClickedDownload()
 	if (!ReadFromPipeWithTimeout(10000, response))
 	{
 		MessageBox(L"Unable to get answer from worker.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		active = false; // Reset active flag
 		return;
 	}
 	//ss
@@ -1905,9 +1963,10 @@ void CsteamcloudDlg::OnBnClickedDownload()
 		using json = nlohmann::json;
 		json result = json::parse(response);
 
-		if (result.is_array() && result.empty())
+		if (result.is_array() && result.empty()) {
+			active = false; // Reset active flag
 			return; // Don't display anything if the array is empty
-
+		}
 		CString statusMsg;
 		for (const auto& item : result)
 		{
@@ -1940,6 +1999,7 @@ void CsteamcloudDlg::OnBnClickedDownload()
 	{
 		MessageBox(L"Error on parsing JSON response.", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
 	}
+	active = false; // Reset active flag
 }
 
 DWORD CsteamcloudDlg::GetProcessPIDByName(const wchar_t* name) //Search Process ID by Name
@@ -2011,6 +2071,8 @@ void CsteamcloudDlg::OnBnClickedRefresh()
 
 void CsteamcloudDlg::OnBnClickedDisconnect()
 {
+	if (!active) return; // if another command is being processed, return immediately
+	active = true; // Set active flag to prevent multiple commands being processed at the same time
 	if (!init) return; // If not initialized, do nothing
 	// Attempt to send exit command to worker process
 	if (m_hWorkerProcess && m_hRequestPipe)
@@ -2065,6 +2127,7 @@ void CsteamcloudDlg::OnBnClickedDisconnect()
 	quota->ShowWindow(0);
 	disconnect->EnableWindow(0);
 	Clearlist();
+	active = false; // Reset active flag
 }
 
 

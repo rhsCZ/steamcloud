@@ -75,6 +75,7 @@ private:
 	bool m_ResponseThreadRunning = false;
 	bool m_RequestThreadWaiting = false;
 	bool m_ResponseThreadWaiting = false;
+	bool active = false;
 	int m_nSortedColumn = -1;
 	bool m_bSortAscending = true;
 	bool firstRun = true;
