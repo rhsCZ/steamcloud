@@ -1315,17 +1315,44 @@ void CsteamcloudDlg::OnBnClickedConnect()
 				return;
 			}
 			else if (status == "SteamAPI_Init failed" || status == "SteamAPI not initialized") {
+				Clearlist();
+				download->EnableWindow(0);
+				deletefile->EnableWindow(0);
+				upload->EnableWindow(0);
+				uploaddir->EnableWindow(0);
+				refresh->EnableWindow(0);
+				quota->ShowWindow(0);
+				disconnect->EnableWindow(0);
+				init = false;
 				CString msg(status.c_str());
 				MessageBox(msg, L"SteamAPI Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
 				return;
 			}
 		}
 		// If we reach here, it means the response is not in the expected format
+		Clearlist();
+		download->EnableWindow(0);
+		deletefile->EnableWindow(0);
+		upload->EnableWindow(0);
+		uploaddir->EnableWindow(0);
+		refresh->EnableWindow(0);
+		quota->ShowWindow(0);
+		disconnect->EnableWindow(0);
+		init = false;
 		CString jsonStr(response.c_str());
 		MessageBox(jsonStr, L"Worker Response", MB_OK | MB_ICONERROR | MB_TOPMOST);
 		return;
 	}
 	catch (const std::exception& e) {
+		Clearlist();
+		download->EnableWindow(0);
+		deletefile->EnableWindow(0);
+		upload->EnableWindow(0);
+		uploaddir->EnableWindow(0);
+		refresh->EnableWindow(0);
+		quota->ShowWindow(0);
+		disconnect->EnableWindow(0);
+		init = false;
 		CString msg;
 		msg.Format(L"Error when parsing JSON: %S", e.what());
 		MessageBox(msg, L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
@@ -1336,6 +1363,12 @@ void CsteamcloudDlg::OnBnClickedConnect()
 
 void CsteamcloudDlg::OnBnClickedDelete()
 {
+	if(!init)
+	{
+		// this should not happen, but just in case
+		MessageBox(L"Please connect to Steam first!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		return;
+	}
 	int files[25] = { -1 };
 	fill_n(files, 25, -1);
 	int count = 0;
@@ -1421,6 +1454,12 @@ void CsteamcloudDlg::OnBnClickedDelete()
 
 void CsteamcloudDlg::OnBnClickedUpload()
 {
+	if (!init)
+	{
+		// this should not happen, but just in case
+		MessageBox(L"Please connect to Steam first!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		return;
+	}
 	bool fileopened[MAX_FILES_COUNT] = { false };
 	bool filesizeok[MAX_FILES_COUNT] = { false };
 	wchar_t filelist[MAX_FILES_COUNT][MAX_PATH] = { 0 };
@@ -1577,6 +1616,12 @@ void CsteamcloudDlg::OnBnClickedUpload()
 
 void CsteamcloudDlg::OnBnClickedDirupload()
 {
+	if (!init)
+	{
+		// this should not happen, but just in case
+		MessageBox(L"Please connect to Steam first!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		return;
+	}
 	bool emptydir = true;
 	prompt dialog(this);
 	wchar_t filelist[MAX_FILES_COUNT][MAX_PATH] = { 0 };
@@ -1748,6 +1793,12 @@ void CsteamcloudDlg::OnBnClickedDirupload()
 
 void CsteamcloudDlg::OnBnClickedDownload()
 {
+	if (!init)
+	{
+		// this should not happen, but just in case
+		MessageBox(L"Please connect to Steam first!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		return;
+	}
 	constexpr int MAX_SELECTED = 10;
 	int selectedIndices[MAX_SELECTED];
 	int count = 0;
@@ -1948,6 +1999,12 @@ void CsteamcloudDlg::KillAllSteamWorkerProcesses()
 
 void CsteamcloudDlg::OnBnClickedRefresh()
 {
+	if (!init)
+	{
+		// this should not happen, but just in case
+		MessageBox(L"Please connect to Steam first!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		return;
+	}
 	Clearlist();
 	GetFiles();
 }
