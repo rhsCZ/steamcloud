@@ -1294,7 +1294,7 @@ void CsteamcloudDlg::OnBnClickedConnect()
 			return;
 		}
 	}
-	Sleep(200); // Ensure the worker is ready to receive commands
+	Sleep(400); // Ensure the worker is ready to receive commands
 	// Send the connect command to the worker with the specified AppID
 	std::string cmd = "connect " + std::to_string(appid) + "\n";
 	DWORD bytesWritten = 0;
@@ -1312,7 +1312,7 @@ void CsteamcloudDlg::OnBnClickedConnect()
 	pipeblocked = false; // Reset the flag
 	// Wait for a response from the worker within 5seconds
 	string response;
-	if (!ReadFromPipeWithTimeout(1000, response))
+	if (!ReadFromPipeWithTimeout(5000, response))
 	{
 		// If we reach here and gotReply is still false, it means we timed out waiting for a reply
 		MessageBox(L"No response from worker", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);

@@ -20,6 +20,7 @@ std::vector<std::string> TokenizeCommand(const std::string& input) {
 }
 
 int main() {
+	bool once = false;
 	bool ping = false;
     char buffer[1024];
     DWORD bytesRead, bytesWritten;
@@ -57,13 +58,16 @@ int main() {
     }
 	// Send READY message to client - this indicates that the server is ready to process commands
     const char* ready = "READY";
-    WriteFile(hResponsePipe, ready, (DWORD)strlen(ready), &bytesWritten, NULL);
-#ifdef _DEBUG
-	std::cout << "[server] Ready to process commands.\n";
-#endif
     bool steamInitialized = false;
 
     while (true) {
+        if(!once) {
+			once = true;
+            WriteFile(hResponsePipe, ready, (DWORD)strlen(ready), &bytesWritten, NULL);
+#ifdef _DEBUG
+            std::cout << "[server] Ready to process commands.\n";
+#endif
+		}
         DWORD available = 0;
         if (!PeekNamedPipe(hRequestPipe, NULL, 0, NULL, &available, NULL)) {
             std::cerr << "Pipe closed by client.\n";
