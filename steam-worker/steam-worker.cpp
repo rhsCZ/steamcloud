@@ -87,16 +87,16 @@ int main() {
         std::string input(buffer);
         auto tokens = TokenizeCommand(input);
         if (tokens.empty()) continue;
-#ifdef _DEBUG
-		if (command != ".")
-        { 
-		    // Print the command received for debugging purposes, except for the ping command it would be messy
-		    std::cout << "[server] Received command: " << input << "\n";
-        }
-#endif
+
         std::string command = tokens[0];
         std::string response;
-
+#ifdef _DEBUG
+        if (command != ".")
+        {
+            // Print the command received for debugging purposes, except for the ping command it would be messy
+            std::cout << "[server] Received command: " << input << "\n";
+        }
+#endif
         if (command == "connect" && tokens.size() == 2) {
             int appid = std::stoi(tokens[1]);
             if (InitSteamAPI(appid)) {

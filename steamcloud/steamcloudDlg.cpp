@@ -102,7 +102,7 @@ void CsteamcloudDlg::GetFiles()
 	DWORD written = 0;
 	while(pipeblocked)
 	{
-		Sleep(50); // Wait until the pipe is not blocked
+		Sleep(100); // Wait until the pipe is not blocked
 	}
 	pipeblocked = true; // Set the flag to indicate the pipe is blocked
 	if (!WriteFile(m_hRequestPipe, cmdList, (DWORD)strlen(cmdList), &written, NULL)) {
@@ -185,7 +185,7 @@ void CsteamcloudDlg::GetFiles()
 	const char* cmdQuota = "quota\n";
 	while(pipeblocked)
 	{
-		Sleep(50); // Wait until the pipe is not blocked
+		Sleep(100); // Wait until the pipe is not blocked
 	}
 	pipeblocked = true; // Set the flag to indicate the pipe is blocked
 	if (!WriteFile(m_hRequestPipe, cmdQuota, (DWORD)strlen(cmdQuota), &written, NULL)) {
@@ -765,7 +765,7 @@ void CsteamcloudDlg::OnDestroy()
 			DWORD bytesWritten = 0;
 			while (pipeblocked)
 			{
-				Sleep(50); // Wait until the pipe is not blocked
+				Sleep(100); // Wait until the pipe is not blocked
 			}
 			pipeblocked = true; // Set the flag to indicate the pipe is blocked
 			if (WriteFile(m_hRequestPipe, exitCmd, (DWORD)strlen(exitCmd), &bytesWritten, NULL))
@@ -1247,7 +1247,7 @@ void CsteamcloudDlg::OnBnClickedConnect()
 		}
 		m_hWorkerProcess = pi.hProcess;
 		CloseHandle(pi.hThread);
-
+		Sleep(200); // Give the worker some time to initialize
 		// Wait for the worker to send "READY" message - this is crucial to ensure the worker is ready before sending any commands
 		std::string output;
 		const DWORD timeoutMs = 10000;
@@ -1270,13 +1270,13 @@ void CsteamcloudDlg::OnBnClickedConnect()
 			return;
 		}
 	}
-
+	Sleep(200); // Ensure the worker is ready to receive commands
 	// Send the connect command to the worker with the specified AppID
 	std::string cmd = "connect " + std::to_string(appid) + "\n";
 	DWORD bytesWritten = 0;
 	while (pipeblocked)
 	{
-		Sleep(50); // Wait until the pipe is not blocked
+		Sleep(100); // Wait until the pipe is not blocked
 	}
 	pipeblocked = true; // Set the flag to indicate the pipe is blocked
 	if (!WriteFile(m_hRequestPipe, cmd.c_str(), (DWORD)cmd.length(), &bytesWritten, NULL)) {
@@ -1370,7 +1370,7 @@ void CsteamcloudDlg::OnBnClickedDelete()
 	DWORD written = 0;
 	while (pipeblocked)
 	{
-		Sleep(50); // Wait until the pipe is not blocked
+		Sleep(100); // Wait until the pipe is not blocked
 	}
 	pipeblocked = true; // Set the flag to indicate the pipe is blocked
 	if (!WriteFile(m_hRequestPipe, command.c_str(), (DWORD)command.size(), &written, NULL))
@@ -1513,7 +1513,7 @@ void CsteamcloudDlg::OnBnClickedUpload()
 	DWORD bytesWritten = 0;
 	while (pipeblocked)
 	{
-		Sleep(50); // Wait until the pipe is not blocked
+		Sleep(100); // Wait until the pipe is not blocked
 	}
 	pipeblocked = true; // Set the flag to indicate the pipe is blocked
 	if (!WriteFile(m_hRequestPipe, commandStr.c_str(), (DWORD)commandStr.size(), &bytesWritten, NULL))
@@ -1684,7 +1684,7 @@ void CsteamcloudDlg::OnBnClickedDirupload()
 			std::string commandStr = uploadCommand.str();
 			while (pipeblocked)
 			{
-				Sleep(50); // Wait until the pipe is not blocked
+				Sleep(100); // Wait until the pipe is not blocked
 			}
 			pipeblocked = true; // Set the flag to indicate the pipe is blocked
 			if (!WriteFile(m_hRequestPipe, commandStr.c_str(), (DWORD)commandStr.size(), &written, NULL))
@@ -1831,7 +1831,7 @@ void CsteamcloudDlg::OnBnClickedDownload()
 	DWORD bytesWritten = 0;
 	while (pipeblocked)
 	{
-		Sleep(50); // Wait until the pipe is not blocked
+		Sleep(100); // Wait until the pipe is not blocked
 	}
 	pipeblocked = true; // Set the flag to indicate the pipe is blocked
 	if (!WriteFile(m_hRequestPipe, cmd.c_str(), (DWORD)cmd.length(), &bytesWritten, NULL))
@@ -1962,7 +1962,7 @@ void CsteamcloudDlg::OnBnClickedDisconnect()
 		DWORD bytesWritten = 0;
 		while (pipeblocked)
 		{
-			Sleep(50); // Wait until the pipe is not blocked
+			Sleep(100); // Wait until the pipe is not blocked
 		}
 		pipeblocked = true; // Set the pipe to blocked state to prevent further writes until this command is processed
 		if (!WriteFile(m_hRequestPipe, exitCmd, (DWORD)strlen(exitCmd), &bytesWritten, NULL)) {
@@ -2338,7 +2338,7 @@ void CsteamcloudDlg::RequestPipeThread()
 				}
 			}
 
-			Sleep(300); // sleep for 150 ms to avoid busy waiting and reduce CPU usage
+			Sleep(800); // sleep for 150 ms to avoid busy waiting and reduce CPU usage
 		}
 
 		// pipe is broken, we need to disconnect it and wait for the next connection
@@ -2366,7 +2366,7 @@ void CsteamcloudDlg::ResponsePipeThread()
 		// wait until another thread sets m_brokenPipe to true
 		while (!m_brokenPipe && m_ResponseThreadEnabled)
 		{
-			Sleep(300); // sleep for 150 ms to avoid busy waiting and reduce CPU usage
+			Sleep(800); // sleep for 150 ms to avoid busy waiting and reduce CPU usage
 		}
 		m_statusresponsepipe = false;
 		// pipe is broken, we need to disconnect it and wait for the next connection
