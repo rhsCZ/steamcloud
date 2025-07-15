@@ -10,6 +10,7 @@
 #include <sstream>
 #include <iterator>
 #include <thread>
+#include <tlhelp32.h>
 #include <algorithm>
 #include <map>
 #include <set>
@@ -40,7 +41,18 @@ size_t get_data_size(const char(&data)[N]);
 template<typename T>
 size_t get_data_size(const T& data);
 bool ExtractResourceToFile(HINSTANCE hInstance, LPCWSTR resourceName, LPCWSTR resourceType, const CString& outPath);
-
+//int CALLBACK CompareFunc(LPARAM lParam1, LPARAM lParam2, LPARAM lParamSort);)
+struct SortInfo {
+	int column;
+	bool ascending;
+};
+struct FileRow {
+	CString name;
+	__time64_t timestamp;
+	int size;
+	bool persisted;
+	bool exists;
+};
 class CsteamcloudDlg : public CDialog
 {
 private:
@@ -63,12 +75,20 @@ private:
 	bool m_ResponseThreadRunning = false;
 	bool m_RequestThreadWaiting = false;
 	bool m_ResponseThreadWaiting = false;
+	int m_nSortedColumn = -1;
+	bool m_bSortAscending = true;
 	bool firstRun = true;
 	void RequestPipeThread();
 	void ResponsePipeThread();
 	thread m_RequestpipeThread;
 	thread m_ResponsepipeThread;
+	std::vector<FileRow> m_fileRowData;
+	afx_msg void OnLvnColumnClickListFiles(NMHDR* pNMHDR, LRESULT* pResult);
 	afx_msg LRESULT OnTrayNotify(WPARAM wParam, LPARAM lParam);
+	//PFNLVCOMPARE CompareFunc(LPARAM lParam1, LPARAM lParam2, LPARAM lParamSort);
+	static int CALLBACK CompareFunc(LPARAM lParam1, LPARAM lParam2, LPARAM lParamSort);
+	DWORD GetProcessPIDByName(const wchar_t* name);
+	void KillAllSteamWorkerProcesses();
 // Construction
 public:
 	NOTIFYICONDATA	m_nidIconData;

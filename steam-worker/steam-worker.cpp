@@ -88,7 +88,11 @@ int main() {
         auto tokens = TokenizeCommand(input);
         if (tokens.empty()) continue;
 #ifdef _DEBUG
-		std::cout << "[server] Received command: " << input << "\n";
+		if (command != ".")
+        { 
+		    // Print the command received for debugging purposes, except for the ping command it would be messy
+		    std::cout << "[server] Received command: " << input << "\n";
+        }
 #endif
         std::string command = tokens[0];
         std::string response;
