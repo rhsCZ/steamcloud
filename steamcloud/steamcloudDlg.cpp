@@ -1167,7 +1167,7 @@ PCHAR* CsteamcloudDlg::CommandLineToArgvA(PCHAR CmdLine,int* _argc)
 
 void CsteamcloudDlg::OnBnClickedConnect()
 {
-	if (!m_ResponseThreadWaiting || !m_RequestThreadWaiting)
+	if ((m_hWorkerProcess == NULL || m_hWorkerProcess == INVALID_HANDLE_VALUE) && (!m_ResponseThreadWaiting || !m_RequestThreadWaiting))
 	{
 		Sleep(300); // Ensure the pipes are ready.
 		if (!m_ResponseThreadWaiting || !m_RequestThreadWaiting)
