@@ -11,6 +11,7 @@
 #include <iterator>
 #include <thread>
 #include <tlhelp32.h>
+#include <WinUser.h>
 #include <algorithm>
 #include <map>
 #include <set>
@@ -82,6 +83,7 @@ private:
 	bool m_RequestThreadWaiting = false;
 	bool m_ResponseThreadWaiting = false;
 	bool active = false;
+	bool clearing = false;
 	int m_nSortedColumn = -1;
 	bool m_bSortAscending = true;
 	bool firstRun = true;
