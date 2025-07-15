@@ -1190,7 +1190,6 @@ void CsteamcloudDlg::OnBnClickedConnect()
 			return;
 		}
 	}
-	Clearlist();
 	// Obtain the AppID from the input field
 	CString appidStr;
 	inputappid->GetWindowTextW(appidStr);
@@ -1213,7 +1212,7 @@ void CsteamcloudDlg::OnBnClickedConnect()
 		active = false; // Reset active flag
 		return;
 	}
-
+	Clearlist();
 	// If the worker process is not running, start it
 	if (m_hWorkerProcess == NULL)
 	{
@@ -1329,8 +1328,7 @@ void CsteamcloudDlg::OnBnClickedConnect()
 			if (status == "connected") {
 				UpdateAppIdHistoryFromInput();
 				SaveComboBoxHistory();
-				Clearlist();
-				GetFiles(); // Get files after successful connection
+				// Get files after successful connection
 				deletefile->EnableWindow();
 				upload->EnableWindow();
 				uploaddir->EnableWindow();
@@ -1339,7 +1337,9 @@ void CsteamcloudDlg::OnBnClickedConnect()
 				quota->ShowWindow(1);
 				disconnect->EnableWindow();
 				init = true;
-				active = false; // Reset active flag
+				active = false;
+				Clearlist();
+				GetFiles(); // Reset active flag
 				return;
 			}
 			else if (status == "SteamAPI_Init failed" || status == "SteamAPI not initialized") {
@@ -1394,7 +1394,7 @@ void CsteamcloudDlg::OnBnClickedConnect()
 
 void CsteamcloudDlg::OnBnClickedDelete()
 {
-	if (!active) return; // if another command is being processed, return immediately
+	if (active) return; // if another command is being processed, return immediately
 	active = true; // Set active flag to prevent multiple commands being processed at the same time
 	if(!init)
 	{
@@ -1493,7 +1493,7 @@ void CsteamcloudDlg::OnBnClickedDelete()
 
 void CsteamcloudDlg::OnBnClickedUpload()
 {
-	if (!active) return; // if another command is being processed, return immediately
+	if (active) return; // if another command is being processed, return immediately
 	active = true; // Set active flag to prevent multiple commands being processed at the same time
 	if (!init)
 	{
@@ -1661,7 +1661,7 @@ void CsteamcloudDlg::OnBnClickedUpload()
 
 void CsteamcloudDlg::OnBnClickedDirupload()
 {
-	if (!active) return; // if another command is being processed, return immediately
+	if (active) return; // if another command is being processed, return immediately
 	active = true; // Set active flag to prevent multiple commands being processed at the same time
 	if (!init)
 	{
@@ -1843,7 +1843,7 @@ void CsteamcloudDlg::OnBnClickedDirupload()
 
 void CsteamcloudDlg::OnBnClickedDownload()
 {
-	if (!active) return; // if another command is being processed, return immediately
+	if (active) return; // if another command is being processed, return immediately
 	active = true; // Set active flag to prevent multiple commands being processed at the same time
 	if (!init)
 	{
@@ -2071,7 +2071,7 @@ void CsteamcloudDlg::OnBnClickedRefresh()
 
 void CsteamcloudDlg::OnBnClickedDisconnect()
 {
-	if (!active) return; // if another command is being processed, return immediately
+	if (active) return; // if another command is being processed, return immediately
 	active = true; // Set active flag to prevent multiple commands being processed at the same time
 	if (!init) return; // If not initialized, do nothing
 	// Attempt to send exit command to worker process
