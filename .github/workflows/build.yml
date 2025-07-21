@@ -17,9 +17,6 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Install WinRAR
-        run: choco install winrar --yes
-
       - name: Build Win32 (x86)
         run: msbuild steamcloud.sln /p:Configuration=Release /p:Platform=x86
 
