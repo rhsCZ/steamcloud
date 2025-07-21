@@ -17,20 +17,19 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Install WinRAR
-        run: choco install winrar --yes
-
       - name: Build Win32 (x86)
         run: msbuild steamcloud.sln /p:Configuration=Release /p:Platform=x86
 
       - name: Build x64
         run: msbuild steamcloud.sln /p:Configuration=Release /p:Platform=x64
 
-      - name: Compress x86 to RAR
-        run: '"C:\Program Files\WinRAR\rar.exe" a steamcloud-x86.rar output\Win32\Release\steamcloud.exe'
+      - name: Pack x86 to RAR
+        shell: cmd
+        run: '"./utils/rar.exe" a steamcloud-x86.rar "output\Win32\Release\steamcloud.exe"'
 
-      - name: Compress x64 to RAR
-        run: '"C:\Program Files\WinRAR\rar.exe" a steamcloud-x64.rar output\x64\Release\steamcloud.exe'
+      - name: Pack x64 to RAR
+        shell: cmd
+        run: '"./utils/rar.exe" a steamcloud-x64.rar "output\x64\Release\steamcloud.exe"'
 
       - name: Upload artifact (manual run only)
         if: github.event_name == 'workflow_dispatch'
