@@ -1,46 +1,50 @@
-name: Build with MSBuild(test)
+name: Build & Release Steamcloud (Backend)
 
 on:
   workflow_dispatch:
+  release:
+    types: [published]
 
 jobs:
   build:
-    name: Build x86 and x64
+    if: github.ref == 'refs/heads/backend'
     runs-on: windows-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup MSBuild path
+      - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Build x86
-        run: |
-          msbuild steamcloud.sln /p:Configuration=Release /p:Platform=x86
+      - name: Install WinRAR
+        run: choco install winrar --yes
 
-      - name: Show x86 build output files
-        run: |
-          Get-ChildItem -Recurse -File | ForEach-Object { $_.FullName }
-
-      - name: Upload x86 Build Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: Build-x86
-          path: |
-            **\x86\Release\*.exe
+      - name: Build Win32 (x86)
+        run: msbuild steamcloud.sln /p:Configuration=Release /p:Platform=Win32
 
       - name: Build x64
-        run: |
-          msbuild steamcloud.sln /p:Configuration=Release /p:Platform=x64
+        run: msbuild steamcloud.sln /p:Configuration=Release /p:Platform=x64
 
-      - name: Show x64 build output files
-        run: |
-          Get-ChildItem -Recurse -File | ForEach-Object { $_.FullName }
+      - name: Compress x86 to RAR
+        run: '"C:\Program Files\WinRAR\rar.exe" a steamcloud-x86.rar output\Win32\Release\steamcloud.exe'
 
-      - name: Upload x64 Build Artifacts
+      - name: Compress x64 to RAR
+        run: '"C:\Program Files\WinRAR\rar.exe" a steamcloud-x64.rar output\x64\Release\steamcloud.exe'
+
+      - name: Upload artifact (manual run only)
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
-          name: Build-x64
+          name: steamcloud-builds
           path: |
-            **\x64\Release\*.exe
+            steamcloud-x86.rar
+            steamcloud-x64.rar
+
+      - name: Upload to GitHub Release (release trigger only)
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            steamcloud-x86.rar
+            steamcloud-x64.rar
