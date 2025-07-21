@@ -1,0 +1,27 @@
+name: Build with MSBuild(test)
+
+on:
+  push:
+    branches: [ backend ]
+  pull_request:
+    branches: [ backend ]
+
+jobs:
+  build:
+    name: Build x86 and x64
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild path
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build x86
+        run: |
+          msbuild steamcloud.sln /p:Configuration=Release /p:Platform=x86
+
+      - name: Build x64
+        run: |
+          msbuild steamcloud.sln /p:Configuration=Release /p:Platform=x64
