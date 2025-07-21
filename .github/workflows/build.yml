@@ -21,7 +21,7 @@ jobs:
         run: choco install winrar --yes
 
       - name: Build Win32 (x86)
-        run: msbuild steamcloud.sln /p:Configuration=Release /p:Platform=Win32
+        run: msbuild steamcloud.sln /p:Configuration=Release /p:Platform=x86
 
       - name: Build x64
         run: msbuild steamcloud.sln /p:Configuration=Release /p:Platform=x64
