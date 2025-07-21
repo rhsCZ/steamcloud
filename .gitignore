@@ -10,3 +10,8 @@ sign.sgui
 output/
 steamcloud/steam.old
 steamcloud/steamcloud.aps
+output-tmp/
+steamcloud/Resource.aps
+steamcloud/rcdata.aps
+steam-worker/Resource.aps
+steam-worker.exe
