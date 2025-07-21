@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    if: github.ref == 'refs/heads/threads-test'
+    if: github.event_name == 'workflow_dispatch' || github.event.release.target_commitish == 'threads-test'
     runs-on: windows-latest
 
     steps:
