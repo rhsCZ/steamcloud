@@ -1,4 +1,4 @@
-name: Build & Release Steamcloud (Backend)
+name: Build & Release Steamcloud
 
 on:
   workflow_dispatch:
@@ -7,12 +7,16 @@ on:
 
 jobs:
   build:
-    if: github.event_name == 'workflow_dispatch' || github.event.release.target_commitish == 'backend'
     runs-on: windows-latest
+
+    env:
+      BRANCH: ${{ github.event_name == 'release' && github.event.release.target_commitish || github.ref_name }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BRANCH }}
 
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
@@ -30,6 +34,72 @@ jobs:
       - name: Pack x64 to RAR
         shell: cmd
         run: '"./utils/rar.exe" a steamcloud-x64.rar "output\x64\Release\steamcloud.exe"'
+
+      # Upload steamcloud.exe vždy
+      - name: Upload x86 steamcloud.exe to VirusTotal
+        id: vt_x86_cloud
+        run: |
+          $response = Invoke-RestMethod -Uri "https://www.virustotal.com/api/v3/files" `
+            -Method Post `
+            -Headers @{ "x-apikey" = "${{ secrets.VT_API_KEY }}" } `
+            -Form @{ file = Get-Item "output\Win32\Release\steamcloud.exe" }
+          echo "analysis_url=https://www.virustotal.com/gui/file-analysis/$($response.data.id)" >> $env:GITHUB_OUTPUT
+
+      - name: Upload x64 steamcloud.exe to VirusTotal
+        id: vt_x64_cloud
+        run: |
+          $response = Invoke-RestMethod -Uri "https://www.virustotal.com/api/v3/files" `
+            -Method Post `
+            -Headers @{ "x-apikey" = "${{ secrets.VT_API_KEY }}" } `
+            -Form @{ file = Get-Item "output\x64\Release\steamcloud.exe" }
+          echo "analysis_url=https://www.virustotal.com/gui/file-analysis/$($response.data.id)" >> $env:GITHUB_OUTPUT
+
+      # Upload steam-worker.exe jen pokud není master
+      - name: Upload x86 steam-worker.exe to VirusTotal (skip on master)
+        if: env.BRANCH != 'refs/heads/master' && env.BRANCH != 'master'
+        id: vt_x86_worker
+        run: |
+          $response = Invoke-RestMethod -Uri "https://www.virustotal.com/api/v3/files" `
+            -Method Post `
+            -Headers @{ "x-apikey" = "${{ secrets.VT_API_KEY }}" } `
+            -Form @{ file = Get-Item "output\Win32\Release\steam-worker.exe" }
+          echo "analysis_url=https://www.virustotal.com/gui/file-analysis/$($response.data.id)" >> $env:GITHUB_OUTPUT
+
+      - name: Upload x64 steam-worker.exe to VirusTotal (skip on master)
+        if: env.BRANCH != 'refs/heads/master' && env.BRANCH != 'master'
+        id: vt_x64_worker
+        run: |
+          $response = Invoke-RestMethod -Uri "https://www.virustotal.com/api/v3/files" `
+            -Method Post `
+            -Headers @{ "x-apikey" = "${{ secrets.VT_API_KEY }}" } `
+            -Form @{ file = Get-Item "output\x64\Release\steam-worker.exe" }
+          echo "analysis_url=https://www.virustotal.com/gui/file-analysis/$($response.data.id)" >> $env:GITHUB_OUTPUT
+
+      # Připojení odkazů do release poznámky - jen pokud je release event
+      - name: Append VirusTotal links to release body
+        if: github.event_name == 'release'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $releaseUrl = "${{ github.event.release.url }}"
+
+          $vtLinks = @"
+          - [x86 steamcloud.exe](${{ steps.vt_x86_cloud.outputs.analysis_url }})
+          - [x64 steamcloud.exe](${{ steps.vt_x64_cloud.outputs.analysis_url }})
+            "@
+
+          if ("${{ env.BRANCH }}" -ne "refs/heads/master" -and "${{ env.BRANCH }}" -ne "master") {
+            $vtLinks += @"
+            - [x86 steam-worker.exe](${{ steps.vt_x86_worker.outputs.analysis_url }})
+            - [x64 steam-worker.exe](${{ steps.vt_x64_worker.outputs.analysis_url }})
+            "@
+          }
+
+          $release = Invoke-RestMethod -Method Get -Uri $releaseUrl -Headers @{ Authorization = "Bearer $env:GITHUB_TOKEN" }
+          $newBody = "$($release.body)`n`n$vtLinks"
+          Invoke-RestMethod -Method Patch -Uri $releaseUrl `
+            -Headers @{ Authorization = "Bearer $env:GITHUB_TOKEN"; "Content-Type" = "application/json" } `
+            -Body (@{ body = $newBody } | ConvertTo-Json)
 
       - name: Upload artifact (manual run only)
         if: github.event_name == 'workflow_dispatch'
