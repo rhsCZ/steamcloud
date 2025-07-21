@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    if: github.ref == 'refs/heads/backend'
+    if: github.event_name == 'workflow_dispatch' || github.event.release.target_commitish == 'backend'
     runs-on: windows-latest
 
     steps:
