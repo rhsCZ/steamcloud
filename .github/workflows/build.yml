@@ -22,6 +22,28 @@ jobs:
         run: |
           msbuild steamcloud.sln /p:Configuration=Release /p:Platform=x86
 
+      - name: Show x86 build output files
+        run: |
+          dir /s /b
+
+      - name: Upload x86 Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Build-x86
+          path: |
+            **\x86\Release\*.exe
+
       - name: Build x64
         run: |
           msbuild steamcloud.sln /p:Configuration=Release /p:Platform=x64
+
+      - name: Show x64 build output files
+        run: |
+          dir /s /b
+
+      - name: Upload x64 Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Build-x64
+          path: |
+            **\x64\Release\*.exe
