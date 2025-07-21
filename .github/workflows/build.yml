@@ -1,10 +1,7 @@
 name: Build with MSBuild(test)
 
 on:
-  push:
-    branches: [ backend ]
-  pull_request:
-    branches: [ backend ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -24,7 +21,7 @@ jobs:
 
       - name: Show x86 build output files
         run: |
-          dir /s /b
+          Get-ChildItem -Recurse -File | ForEach-Object { $_.FullName }
 
       - name: Upload x86 Build Artifacts
         uses: actions/upload-artifact@v4
@@ -39,7 +36,7 @@ jobs:
 
       - name: Show x64 build output files
         run: |
-          dir /s /b
+          Get-ChildItem -Recurse -File | ForEach-Object { $_.FullName }
 
       - name: Upload x64 Build Artifacts
         uses: actions/upload-artifact@v4
