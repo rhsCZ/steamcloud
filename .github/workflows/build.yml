@@ -41,7 +41,7 @@ jobs:
         run: |
           $response = Invoke-RestMethod -Uri "https://www.virustotal.com/api/v3/files" `
             -Method Post `
-            -Headers @{ "x-apikey" = "${{ secrets.VT_API_KEY }}" } `
+            -Headers @{ "X-Apikey" = "${{ secrets.VT_API_KEY }}" } `
             -Form @{ file = Get-Item "output\Win32\Release\steamcloud.exe" }
           echo "analysis_url=https://www.virustotal.com/gui/file-analysis/$($response.data.id)" >> $env:GITHUB_OUTPUT
 
@@ -50,7 +50,7 @@ jobs:
         run: |
           $response = Invoke-RestMethod -Uri "https://www.virustotal.com/api/v3/files" `
             -Method Post `
-            -Headers @{ "x-apikey" = "${{ secrets.VT_API_KEY }}" } `
+            -Headers @{ "X-Apikey" = "${{ secrets.VT_API_KEY }}" } `
             -Form @{ file = Get-Item "output\x64\Release\steamcloud.exe" }
           echo "analysis_url=https://www.virustotal.com/gui/file-analysis/$($response.data.id)" >> $env:GITHUB_OUTPUT
 
@@ -61,7 +61,7 @@ jobs:
         run: |
           $response = Invoke-RestMethod -Uri "https://www.virustotal.com/api/v3/files" `
             -Method Post `
-            -Headers @{ "x-apikey" = "${{ secrets.VT_API_KEY }}" } `
+            -Headers @{ "X-Apikey" = "${{ secrets.VT_API_KEY }}" } `
             -Form @{ file = Get-Item "output\Win32\Release\steam-worker.exe" }
           echo "analysis_url=https://www.virustotal.com/gui/file-analysis/$($response.data.id)" >> $env:GITHUB_OUTPUT
 
@@ -71,7 +71,7 @@ jobs:
         run: |
           $response = Invoke-RestMethod -Uri "https://www.virustotal.com/api/v3/files" `
             -Method Post `
-            -Headers @{ "x-apikey" = "${{ secrets.VT_API_KEY }}" } `
+            -Headers @{ "X-Apikey" = "${{ secrets.VT_API_KEY }}" } `
             -Form @{ file = Get-Item "output\x64\Release\steam-worker.exe" }
           echo "analysis_url=https://www.virustotal.com/gui/file-analysis/$($response.data.id)" >> $env:GITHUB_OUTPUT
 
