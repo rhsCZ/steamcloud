@@ -2,6 +2,11 @@ name: Sync Workflows to All Branches
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - backend
+    paths:
+      - ".github/workflows/**"
 
 jobs:
   sync:
