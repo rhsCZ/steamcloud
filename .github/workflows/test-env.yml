@@ -1,0 +1,23 @@
+name: Test Environment Variables
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  print-env:
+    runs-on: ubuntu-latest
+    env:
+      BRANCH: ${{ github.event_name == 'release' && github.event.release.target_commitish || github.ref_name }}
+    steps:
+      - name: Checkout repo (optional)
+        uses: actions/checkout@v4
+
+      - name: Print evaluated variables
+        run: |
+          echo "Event name: ${{ github.event_name }}"
+          echo "Release tag: ${{ github.event.release.tag_name }}"
+          echo "Target commitish (from release): ${{ github.event.release.target_commitish }}"
+          echo "Git ref name: ${{ github.ref_name }}"
+          echo "BRANCH (computed): $BRANCH"
