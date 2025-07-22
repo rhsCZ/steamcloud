@@ -129,7 +129,7 @@
       <IgnoreSpecificDefaultLibraries>ucrt.lib;msvcrt.lib</IgnoreSpecificDefaultLibraries>
       <StackReserveSize>585960</StackReserveSize>
       <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
-      <AdditionalOptions>/Brepro /timestamp:0 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/Brepro %(AdditionalOptions)</AdditionalOptions>
     </Link>
     <Midl>
       <MkTypLibCompatible>false</MkTypLibCompatible>
@@ -170,7 +170,7 @@
       <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
       <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
       <StackReserveSize>585960</StackReserveSize>
-      <AdditionalOptions>/Brepro /timestamp:0 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/Brepro %(AdditionalOptions)</AdditionalOptions>
     </Link>
     <Midl>
       <MkTypLibCompatible>false</MkTypLibCompatible>
@@ -219,7 +219,7 @@
       <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
       <LinkTimeCodeGeneration>UseFastLinkTimeCodeGeneration</LinkTimeCodeGeneration>
       <StackReserveSize>585960</StackReserveSize>
-      <AdditionalOptions>/Brepro /timestamp:0 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/Brepro %(AdditionalOptions)</AdditionalOptions>
     </Link>
     <Midl>
       <MkTypLibCompatible>false</MkTypLibCompatible>
@@ -268,7 +268,7 @@
       <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
       <LinkTimeCodeGeneration>UseFastLinkTimeCodeGeneration</LinkTimeCodeGeneration>
       <StackReserveSize>585960</StackReserveSize>
-      <AdditionalOptions>/Brepro /timestamp:0 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/Brepro %(AdditionalOptions)</AdditionalOptions>
     </Link>
     <Midl>
       <MkTypLibCompatible>false</MkTypLibCompatible>
