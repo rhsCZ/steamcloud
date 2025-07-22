@@ -10,41 +10,39 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout main branch
+      - name: Checkout all branches
         uses: actions/checkout@v4
         with:
-          ref: backend  # změň podle nové hlavní větve
+          ref: backend
           fetch-depth: 0
 
-      - name: Get list of branches
-        id: branches
+      - name: Fetch all branches
         run: |
-          branches=$(git for-each-ref --format="%(refname:short)" refs/heads/ \
-            | grep -v '^backend$' \
-            | jq -R -s -c 'split("\n") | map(select(length > 0))')
-          echo "branches=$branches" >> "$GITHUB_OUTPUT"
+          git fetch --all
 
-      - name: Debug branches
+      - name: List branches to sync
+        id: list_branches
         run: |
-          echo "Branches from output:"
-          echo '${{ steps.branches.outputs.branches }}' | jq .
+          branches=$(git branch -r | grep 'origin/' | grep -v 'origin/backend' | grep -v 'HEAD' | sed 's|origin/||')
+          echo "Found branches:"
+          echo "$branches"
+          echo "branches=$(echo "$branches" | jq -R -s -c 'split("\n") | map(select(length > 0))')" >> "$GITHUB_OUTPUT"
 
-
-      - name: Sync workflows to each branch
+      - name: Push workflows to each branch
+        env:
+          BRANCHES: ${{ steps.list_branches.outputs.branches }}
         run: |
-          for branch in $(echo '${{ steps.branches.outputs.branches }}' | jq -r '.[]'); do
-            echo "===> Syncing to $branch"
-            git checkout "$branch"
+          echo "$BRANCHES" | jq -r '.[]' | while read branch; do
+            echo "Processing branch: $branch"
 
-            # Přepíše složku workflows ze zdrojové větve
+            git switch "$branch"
             git checkout backend -- .github/workflows
 
-            git config user.name "github-actions"
-            git config user.email "github-actions@github.com"
-
             if git diff --quiet; then
-              echo "No changes to commit for $branch"
+              echo "No changes in workflows for $branch"
             else
+              git config user.name "github-actions"
+              git config user.email "github-actions@github.com"
               git add .github/workflows
               git commit -m "Sync workflows from backend"
               git push origin "$branch"
