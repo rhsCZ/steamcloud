@@ -29,11 +29,11 @@ jobs:
 
       - name: Pack x86 to RAR
         shell: cmd
-        run: '"./utils/rar.exe" a steamcloud-x86.rar "output\Win32\Release\steamcloud.exe"'
+        run: '"./utils/rar.exe" a -ep steamcloud-x86.rar "output\Win32\Release\steamcloud.exe"'
 
       - name: Pack x64 to RAR
         shell: cmd
-        run: '"./utils/rar.exe" a steamcloud-x64.rar "output\x64\Release\steamcloud.exe"'
+        run: '"./utils/rar.exe" a -ep steamcloud-x64.rar "output\x64\Release\steamcloud.exe"'
 
       # Upload steamcloud.exe vždy
       - name: Upload x86 steamcloud.exe to VirusTotal
