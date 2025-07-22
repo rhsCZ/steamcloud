@@ -38,13 +38,15 @@ jobs:
             git switch "$branch"
             git checkout backend -- .github/workflows
 
-            if git diff --quiet; then
-              echo "No changes in workflows for $branch"
-            else
-              git config user.name "github-actions"
-              git config user.email "github-actions@github.com"
+            if git status --porcelain | grep -q .; then
               git add .github/workflows
               git commit -m "Sync workflows from backend"
               git push origin "$branch"
+              git reset --hard
+              git clean -fd
+            else
+              echo "No changes to commit for $branch"
+              git reset --hard
+              git clean -fd
             fi
           done
