@@ -10,28 +10,38 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout backend branch
+      - name: Checkout main branch
         uses: actions/checkout@v4
         with:
-          ref: backend
-          fetch-depth: 0  # potřebujeme všechny větve
+          ref: backend  # změň podle nové hlavní větve
+          fetch-depth: 0
 
       - name: Get list of branches
         id: branches
         run: |
-          branches=$(git for-each-ref --format="%(refname:short)" refs/heads/ | grep -v '^backend$' | jq -R -s -c 'split("\n") | map(select(length > 0))')
-          echo "branches=$branches" >> $GITHUB_OUTPUT
+          branches=$(git for-each-ref --format="%(refname:short)" refs/heads/ \
+            | grep -v '^backend$' \
+            | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "branches=$branches" >> "$GITHUB_OUTPUT"
 
-      - name: Push workflows to all branches
-        env:
-          BRANCHES: ${{ steps.branches.outputs.branches }}
+      - name: Debug branches
         run: |
-          echo "$BRANCHES" | jq -r '.[]' | while read branch; do
-            echo "Syncing to $branch..."
-            git checkout $branch
+          echo "Branches from output:"
+          echo '${{ steps.branches.outputs.branches }}' | jq .
+
+
+      - name: Sync workflows to each branch
+        run: |
+          for branch in $(echo '${{ steps.branches.outputs.branches }}' | jq -r '.[]'); do
+            echo "===> Syncing to $branch"
+            git checkout "$branch"
+
+            # Přepíše složku workflows ze zdrojové větve
             git checkout backend -- .github/workflows
+
             git config user.name "github-actions"
             git config user.email "github-actions@github.com"
+
             if git diff --quiet; then
               echo "No changes to commit for $branch"
             else
