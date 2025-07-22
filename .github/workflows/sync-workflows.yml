@@ -1,0 +1,57 @@
+name: Sync Workflows to All Branches
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout all branches
+        uses: actions/checkout@v4
+        with:
+          ref: backend
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch all branches
+        run: |
+          git fetch --all
+
+      - name: List branches to sync
+        id: list_branches
+        run: |
+          branches=$(git branch -r | grep 'origin/' | grep -v 'origin/backend' | grep -v 'HEAD' | sed 's|origin/||')
+          echo "Found branches:"
+          echo "$branches"
+          echo "branches=$(echo "$branches" | jq -R -s -c 'split("\n") | map(select(length > 0))')" >> "$GITHUB_OUTPUT"
+
+      - name: Push workflows to each branch
+        env:
+          BRANCHES: ${{ steps.list_branches.outputs.branches }}
+        run: |
+          echo "$BRANCHES" | jq -r '.[]' | while read branch; do
+            echo "Processing branch: $branch"
+
+            git switch "$branch"
+            git checkout backend -- .github/workflows
+
+            if git status --porcelain | grep -q .; then
+              git add .github/workflows
+              git commit -m "Sync workflows from backend"
+              git push origin "$branch"
+              git reset --hard
+              git clean -fd
+            else
+              echo "No changes to commit for $branch"
+              git reset --hard
+              git clean -fd
+            fi
+          done
