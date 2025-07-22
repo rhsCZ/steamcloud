@@ -206,7 +206,7 @@ public:
 	void GetFiles();
 	void Clearlist();
 	void UpdateFileSizesDisplay();
-	bool ReadFromPipeWithTimeout(DWORD timeoutMs, std::string& output);
+	bool ReadFromPipeWithTimeout(ULONGLONG timeoutMs, std::string& output);
 	afx_msg void OnBnClickedRefresh();
 	afx_msg void OnBnClickedDisconnect();
 	afx_msg void OnBnClickedBytes();

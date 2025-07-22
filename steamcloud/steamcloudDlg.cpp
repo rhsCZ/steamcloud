@@ -65,10 +65,10 @@ int CALLBACK CsteamcloudDlg::CompareFunc(LPARAM lParam1, LPARAM lParam2, LPARAM 
 	return info->ascending ? result : -result;
 }
 
-bool CsteamcloudDlg::ReadFromPipeWithTimeout(DWORD timeoutMs, std::string& output)
+bool CsteamcloudDlg::ReadFromPipeWithTimeout(ULONGLONG timeoutMs, std::string& output)
 {
 	const DWORD interval = 100; // 100ms polling
-	DWORD startTime = GetTickCount64();
+	ULONGLONG startTime = GetTickCount64();
 	char buffer[8192] = {};
 	DWORD totalRead = 0;
 
@@ -388,7 +388,7 @@ void CsteamcloudDlg::RefreshListFromData()
 	{
 		Sleep(100); // Wait until the clearing operation is finished
 	}
-	for (int index = 0; index < m_fileRowData.size(); ++index)
+	for (size_t index = 0; index < m_fileRowData.size(); ++index)
 	{
 		const FileRow& row = m_fileRowData[index];
 
