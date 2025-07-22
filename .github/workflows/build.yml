@@ -80,26 +80,33 @@ jobs:
         if: github.event_name == 'release'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VT_X86_CLOUD: ${{ steps.vt_x86_cloud.outputs.analysis_url }}
+          VT_X64_CLOUD: ${{ steps.vt_x64_cloud.outputs.analysis_url }}
+          VT_X86_WORKER: ${{ steps.vt_x86_worker.outputs.analysis_url }}
+          VT_X64_WORKER: ${{ steps.vt_x64_worker.outputs.analysis_url }}
         run: |
-          $releaseUrl = "${{ github.event.release.url }}"
-
-          $vtLinks = @"
-- [x86 steamcloud.exe](${{ steps.vt_x86_cloud.outputs.analysis_url }})
-- [x64 steamcloud.exe](${{ steps.vt_x64_cloud.outputs.analysis_url }})
-"@
-
-          if ("${{ env.BRANCH }}" -ne "refs/heads/master" -and "${{ env.BRANCH }}" -ne "master") {
-            $vtLinks += @"
-- [x86 steam-worker.exe](${{ steps.vt_x86_worker.outputs.analysis_url }})
-- [x64 steam-worker.exe](${{ steps.vt_x64_worker.outputs.analysis_url }})
-"@
+          $branch = '${{ env.BRANCH }}'
+      
+          # základní odkazy vždy
+          $vtLinks  = "- [x86 steamcloud.exe]($env:VT_X86_CLOUD)`n"
+          $vtLinks += "- [x64 steamcloud.exe]($env:VT_X64_CLOUD)`n"
+      
+          # worker jen mimo master
+          if ($branch -ne 'master') {
+            $vtLinks += "- [x86 steam-worker.exe]($env:VT_X86_WORKER)`n"
+            $vtLinks += "- [x64 steam-worker.exe]($env:VT_X64_WORKER)`n"
           }
-
-          $release = Invoke-RestMethod -Method Get -Uri $releaseUrl -Headers @{ Authorization = "Bearer $env:GITHUB_TOKEN" }
+      
+          $releaseUrl = '${{ github.event.release.url }}'
+          $token      = $env:GITHUB_TOKEN
+      
+          $release = Invoke-RestMethod -Method Get -Uri $releaseUrl -Headers @{Authorization = "Bearer $token"}
           $newBody = "$($release.body)`n`n$vtLinks"
+      
           Invoke-RestMethod -Method Patch -Uri $releaseUrl `
-            -Headers @{ Authorization = "Bearer $env:GITHUB_TOKEN"; "Content-Type" = "application/json" } `
-            -Body (@{ body = $newBody } | ConvertTo-Json)
+            -Headers @{Authorization = "Bearer $token"; 'Content-Type' = 'application/json'} `
+            -Body (@{body = $newBody} | ConvertTo-Json)
+
 
       - name: Upload artifact (manual run only)
         if: github.event_name == 'workflow_dispatch'
