@@ -37,6 +37,7 @@ jobs:
 
       # Upload steamcloud.exe vždy
       - name: Upload x86 steamcloud.exe to VirusTotal
+        if: github.event_name == 'release'
         id: vt_x86_cloud
         run: |
           $response = Invoke-RestMethod -Uri "https://www.virustotal.com/api/v3/files" `
@@ -46,6 +47,7 @@ jobs:
           echo "analysis_url=https://www.virustotal.com/gui/file-analysis/$($response.data.id)" >> $env:GITHUB_OUTPUT
 
       - name: Upload x64 steamcloud.exe to VirusTotal
+        if: github.event_name == 'release'
         id: vt_x64_cloud
         run: |
           $response = Invoke-RestMethod -Uri "https://www.virustotal.com/api/v3/files" `
@@ -56,7 +58,7 @@ jobs:
 
       # Upload steam-worker.exe jen pokud není master
       - name: Upload x86 steam-worker.exe to VirusTotal (skip on master)
-        if: env.BRANCH != 'refs/heads/master' && env.BRANCH != 'master'
+        if: env.BRANCH != 'master' && github.event_name == 'release'
         id: vt_x86_worker
         run: |
           $response = Invoke-RestMethod -Uri "https://www.virustotal.com/api/v3/files" `
@@ -66,7 +68,7 @@ jobs:
           echo "analysis_url=https://www.virustotal.com/gui/file-analysis/$($response.data.id)" >> $env:GITHUB_OUTPUT
 
       - name: Upload x64 steam-worker.exe to VirusTotal (skip on master)
-        if: env.BRANCH != 'refs/heads/master' && env.BRANCH != 'master'
+        if: env.BRANCH != 'master' && github.event_name == 'release'
         id: vt_x64_worker
         run: |
           $response = Invoke-RestMethod -Uri "https://www.virustotal.com/api/v3/files" `
