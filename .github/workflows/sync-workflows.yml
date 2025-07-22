@@ -1,0 +1,42 @@
+name: Sync Workflows to All Branches
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout backend branch
+        uses: actions/checkout@v4
+        with:
+          ref: backend
+          fetch-depth: 0  # potřebujeme všechny větve
+
+      - name: Get list of branches
+        id: branches
+        run: |
+          branches=$(git for-each-ref --format="%(refname:short)" refs/heads/ | grep -v '^backend$' | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "branches=$branches" >> $GITHUB_OUTPUT
+
+      - name: Push workflows to all branches
+        env:
+          BRANCHES: ${{ steps.branches.outputs.branches }}
+        run: |
+          echo "$BRANCHES" | jq -r '.[]' | while read branch; do
+            echo "Syncing to $branch..."
+            git checkout $branch
+            git checkout backend -- .github/workflows
+            git config user.name "github-actions"
+            git config user.email "github-actions@github.com"
+            if git diff --quiet; then
+              echo "No changes to commit for $branch"
+            else
+              git add .github/workflows
+              git commit -m "Sync workflows from backend"
+              git push origin "$branch"
+            fi
+          done
