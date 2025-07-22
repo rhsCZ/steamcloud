@@ -85,14 +85,12 @@ jobs:
 
           $vtLinks = @"
           - [x86 steamcloud.exe](${{ steps.vt_x86_cloud.outputs.analysis_url }})
-          - [x64 steamcloud.exe](${{ steps.vt_x64_cloud.outputs.analysis_url }})
-            "@
+          - [x64 steamcloud.exe](${{ steps.vt_x64_cloud.outputs.analysis_url }})"@
 
           if ("${{ env.BRANCH }}" -ne "refs/heads/master" -and "${{ env.BRANCH }}" -ne "master") {
             $vtLinks += @"
             - [x86 steam-worker.exe](${{ steps.vt_x86_worker.outputs.analysis_url }})
-            - [x64 steam-worker.exe](${{ steps.vt_x64_worker.outputs.analysis_url }})
-            "@
+            - [x64 steam-worker.exe](${{ steps.vt_x64_worker.outputs.analysis_url }})"@
           }
 
           $release = Invoke-RestMethod -Method Get -Uri $releaseUrl -Headers @{ Authorization = "Bearer $env:GITHUB_TOKEN" }
