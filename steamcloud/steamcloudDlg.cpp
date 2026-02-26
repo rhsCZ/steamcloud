@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "framework.h"
 #include "steamcloud.h"
 #include "steamcloudDlg.h"
@@ -89,138 +89,165 @@ bool CsteamcloudDlg::ReadFromPipeWithTimeout(ULONGLONG timeoutMs, std::string& o
 	}
 	return false;
 }
+
+bool CsteamcloudDlg::SendCommandAndReadResponse(const std::string& command, ULONGLONG timeoutMs, std::string& response)
+{
+	std::lock_guard<std::mutex> lock(m_pipeIoMutex);
+	if (!m_hRequestPipe || m_hRequestPipe == INVALID_HANDLE_VALUE ||
+		!m_hResponsePipe || m_hResponsePipe == INVALID_HANDLE_VALUE)
+	{
+		return false;
+	}
+
+	DWORD bytesWritten = 0;
+	if (!WriteFile(m_hRequestPipe, command.c_str(), static_cast<DWORD>(command.size()), &bytesWritten, NULL))
+	{
+		return false;
+	}
+
+	return ReadFromPipeWithTimeout(timeoutMs, response);
+}
+
+bool CsteamcloudDlg::EnsureWorkerIdle(std::wstring& statusMessage)
+{
+	std::string response;
+	if (!SendCommandAndReadResponse("status\n", 4000, response))
+	{
+		statusMessage = L"Worker status is unavailable (pipe timeout or write failure).";
+		return false;
+	}
+
+	try
+	{
+		auto parsed = json::parse(response);
+		if (!parsed.is_array() || parsed.empty())
+		{
+			statusMessage = L"Worker returned invalid status response.";
+			return false;
+		}
+
+		const auto& first = parsed[0];
+		const std::string status = first.value("status", "");
+		if (status == "idle")
+		{
+			return true;
+		}
+
+		if (status == "working" || status == "busy")
+		{
+			const std::string operation = first.value("operation", "unknown");
+			CStringW msg;
+			msg.Format(L"Worker is currently busy (%S). Please wait and try again.", operation.c_str());
+			statusMessage = std::wstring(msg);
+			return false;
+		}
+
+		CStringW msg;
+		msg.Format(L"Worker status is '%S'. Please wait and try again.", status.c_str());
+		statusMessage = std::wstring(msg);
+		return false;
+	}
+	catch (...)
+	{
+		statusMessage = L"Worker returned malformed status JSON.";
+		return false;
+	}
+}
 void CsteamcloudDlg::GetFiles()
 {
-	if (active) return; // If another operation is in progress, do not proceed
-	active = true; // Set the flag to indicate an operation is in progress
+	if (!TryBeginAction()) return;
 	while(clearing)
 	{
 		Sleep(100); // Wait until the clearing operation is finished
 	}
 	thread([this]() {
-		m_fileRowData.clear(); // Clear previous file data
-		// Start the operation in a separate thread
-	if (!m_hResponsePipe || m_hResponsePipe == INVALID_HANDLE_VALUE) {
-		::MessageBox(NULL,L"Pipe's not open.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		active = false; // Reset active flag
-		return;
-	}
-	bool empty = false;
-	
-	// 1. send "list" command
-	const char* cmdList = "list\n";
-	DWORD written = 0;
-	while(pipeblocked)
-	{
-		Sleep(100); // Wait until the pipe is not blocked
-	}
-	pipeblocked = true; // Set the flag to indicate the pipe is blocked
-	Sleep(100); // Ensure the pipe is ready to write
-	if (!WriteFile(m_hRequestPipe, cmdList, (DWORD)strlen(cmdList), &written, NULL)) {
-		pipeblocked = false; // Reset the flag if write fails
-		::MessageBox(NULL,L"Unable to write 'list to pipe'", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		active = false; // Reset active flag
-		return;
-	}
-	pipeblocked = false; // Reset the flag after writing
-	std::string listJsonStr;
-	if (!ReadFromPipeWithTimeout(10000, listJsonStr)) {
-		::MessageBox(NULL,L"Timeout(10s) when reading result from pipe(list).", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		active = false; // Reset active flag
-		return;
-	}
+		if (!m_hResponsePipe || m_hResponsePipe == INVALID_HANDLE_VALUE) {
+			PostAsyncMessage(L"Error", L"Pipe's not open.", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			EndAction();
+			return;
+		}
 
-	// 2. Parse JSON listu
-	json j;
-	try {
-		j = json::parse(listJsonStr);
-	}
-	catch (...) {
-		::MessageBox(NULL,L"Error on parsing JSON result from pipe(list)", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		active = false; // Reset active flag
-		return;
-	}
+		std::wstring statusMessage;
+		if (!EnsureWorkerIdle(statusMessage)) {
+			PostAsyncMessage(L"Worker busy", statusMessage.c_str(), MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
+			EndAction();
+			return;
+		}
 
-	if (j.is_array() && j.empty()) {
-		empty = true;
-	}
-	if(!empty)
-	{ 
-		m_fileSizesBytes.clear();
-		int index = 0;
-		for (auto& [key, val] : j.items()) {
+		std::string listJsonStr;
+		if (!SendCommandAndReadResponse("list\n", 10000, listJsonStr)) {
+			PostAsyncMessage(L"Error", L"Unable to write 'list to pipe'", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			EndAction();
+			return;
+		}
+
+		json listJson;
+		try {
+			listJson = json::parse(listJsonStr);
+		}
+		catch (...) {
+			PostAsyncMessage(L"Error", L"Error on parsing JSON result from pipe(list)", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			EndAction();
+			return;
+		}
+
+		std::vector<FileRow> rows;
+		std::map<CString, int64_t> sizes;
+		if (!listJson.is_array()) {
+			PostAsyncMessage(L"Error", L"Invalid list response format.", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			EndAction();
+			return;
+		}
+
+		for (auto& val : listJson) {
 			if (!val.is_object()) continue;
-
 			std::string name = val.value("name", "");
-			uint64_t timestamp = val.value("timestamp", 0);
-			int size = val.value("size", 0);
-			bool exists = val.value("exists", false);
-			bool persisted = val.value("persistent", false);
 			FileRow row;
 			row.name = CA2W(name.c_str());
-			row.timestamp = (__time64_t)timestamp;
-			row.size = size;
-			row.exists = exists;
-			row.persisted = persisted;
-			m_fileRowData.push_back(row);
-			CString namecs(name.c_str());
-			m_fileSizesBytes[namecs] = size;
-			CString nameW(name.c_str());
-			CString sizeW, dateW;
-			index++;
+			row.timestamp = static_cast<__time64_t>(val.value("timestamp", 0ULL));
+			row.size = val.value("size", 0);
+			row.exists = val.value("exists", false);
+			row.persisted = val.value("persistent", false);
+			rows.push_back(row);
+			sizes[row.name] = row.size;
 		}
-		if (m_nSortedColumn >= 0)
+
+		std::string quotaJsonStr;
+		if (!SendCommandAndReadResponse("quota\n", 5000, quotaJsonStr)) {
+			PostAsyncMessage(L"Error", L"Cannot write the 'quota' command to pipe.", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			EndAction();
+			return;
+		}
+
+		json quotaJsonArray;
+		try {
+			quotaJsonArray = json::parse(quotaJsonStr);
+		}
+		catch (...) {
+			PostAsyncMessage(L"Error", L"Error parsing JSON response (quota).", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			EndAction();
+			return;
+		}
+
+		if (!quotaJsonArray.is_array() || quotaJsonArray.empty()) {
+			PostAsyncMessage(L"Error", L"Invalid quota response format.", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			EndAction();
+			return;
+		}
+
+		const json& quotaJson = quotaJsonArray[0];
 		{
-			SortInfo info = { m_nSortedColumn, m_bSortAscending };
-			listfiles->SortItems(CompareFunc, (LPARAM)&info);
+			std::lock_guard<std::mutex> lock(m_dataMutex);
+			m_fileRowData = std::move(rows);
+			m_fileSizesBytes = std::move(sizes);
+			m_quotaUsed = quotaJson.value("used", 0ULL);
+			m_quotaTotal = quotaJson.value("total", 0ULL);
+			m_quotaAvailable = quotaJson.value("available", 0ULL);
 		}
-	}
-	// 3. quota
-	const char* cmdQuota = "quota\n";
-	while(pipeblocked)
-	{
-		Sleep(100); // Wait until the pipe is not blocked
-	}
-	pipeblocked = true; // Set the flag to indicate the pipe is blocked
-	Sleep(100); // Ensure the pipe is ready to write
-	if (!WriteFile(m_hRequestPipe, cmdQuota, (DWORD)strlen(cmdQuota), &written, NULL)) {
-		pipeblocked = false; // Reset the flag if write fails
-		::MessageBox(NULL,L"Cannot write the 'quota' command to pipe.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		active = false; // Reset active flag
-		return;
-	}
-	pipeblocked = false; // Reset the flag after writing
-	std::string quotaJsonStr;
-	if (!ReadFromPipeWithTimeout(5000, quotaJsonStr)) {
-		::MessageBox(NULL,L"Response read timeout (quota).", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		active = false; // Reset active flag
-		return;
-	}
 
-	json quotaJsonArray;
-	try {
-		quotaJsonArray = json::parse(quotaJsonStr);
-	}
-	catch (...) {
-		::MessageBox(NULL,L"Error parsing JSON response (quota).", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		active = false; // Reset active flag
-		return;
-	}
-
-	if (!quotaJsonArray.is_array() || quotaJsonArray.empty()) {
-		::MessageBox(NULL,L"Invalid quota response format.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		active = false; // Reset active flag
-		return;
-	}
-
-	json quotaJson = quotaJsonArray[0];
-
-	m_quotaUsed = quotaJson.value("used", 0ULL);
-	m_quotaTotal = quotaJson.value("total", 0ULL);
-	m_quotaAvailable = quotaJson.value("available", 0ULL);
-	PostMessage(WM_UPDATE_QUOTA, 0, 0); // Notify the dialog to update the quota display
-	PostMessage(WM_UPDATE_LIST, 0, 0); // Notify the dialog to update the list control
-	active = false; // Reset active flag
+		PostMessage(WM_UPDATE_QUOTA, 0, 0);
+		PostMessage(WM_UPDATE_LIST, 0, 0);
+		EndAction();
 	}).detach();
 }
 
@@ -303,6 +330,8 @@ BEGIN_MESSAGE_MAP(CsteamcloudDlg, CDialog)
 	ON_MESSAGE(WM_DISABLE_CONTROL, &CsteamcloudDlg::OnDisableControl)
 	ON_MESSAGE(WM_CLEAR_LIST, &CsteamcloudDlg::OnClearList)
 	ON_MESSAGE(WM_UPDATE_COMBOBOX, &CsteamcloudDlg::OnUpdateComboBox)
+	ON_MESSAGE(WM_SHOW_ASYNC_MESSAGE, &CsteamcloudDlg::OnShowAsyncMessage)
+	ON_MESSAGE(WM_REQUEST_GETFILES, &CsteamcloudDlg::OnRequestGetFiles)
 END_MESSAGE_MAP()
 
 LRESULT CsteamcloudDlg::OnUpdateList(WPARAM wParam, LPARAM lParam)
@@ -356,11 +385,52 @@ LRESULT CsteamcloudDlg::OnUpdateComboBox(WPARAM wParam, LPARAM lParam)
 	SaveComboBoxHistory();
 	return 0;
 }
+LRESULT CsteamcloudDlg::OnShowAsyncMessage(WPARAM wParam, LPARAM lParam)
+{
+	AsyncMessagePayload* payload = reinterpret_cast<AsyncMessagePayload*>(lParam);
+	if (payload != nullptr) {
+		HWND target = ::IsWindow(this->m_hWnd) ? this->m_hWnd : NULL;
+		::MessageBox(target, payload->text, payload->title, payload->flags);
+		delete payload;
+	}
+	return 0;
+}
+LRESULT CsteamcloudDlg::OnRequestGetFiles(WPARAM wParam, LPARAM lParam)
+{
+	GetFiles();
+	return 0;
+}
+
+void CsteamcloudDlg::PostAsyncMessage(const CString& title, const CString& text, UINT flags)
+{
+	AsyncMessagePayload* payload = new AsyncMessagePayload();
+	payload->title = title;
+	payload->text = text;
+	payload->flags = flags;
+	PostMessage(WM_SHOW_ASYNC_MESSAGE, 0, reinterpret_cast<LPARAM>(payload));
+}
+
+bool CsteamcloudDlg::TryBeginAction()
+{
+	bool expected = false;
+	return active.compare_exchange_strong(expected, true);
+}
+
+void CsteamcloudDlg::EndAction()
+{
+	active.store(false);
+}
 void CsteamcloudDlg::UpdateQuota()
 {
-	uint64_t total = m_quotaTotal;
-	uint64_t used = m_quotaUsed;
-	uint64_t available = m_quotaAvailable;
+	uint64_t total = 0;
+	uint64_t used = 0;
+	uint64_t available = 0;
+	{
+		std::lock_guard<std::mutex> lock(m_dataMutex);
+		total = m_quotaTotal;
+		used = m_quotaUsed;
+		available = m_quotaAvailable;
+	}
 
 	CString quotaText;
 	switch (sizeunit) {
@@ -388,6 +458,7 @@ void CsteamcloudDlg::RefreshListFromData()
 	{
 		Sleep(100); // Wait until the clearing operation is finished
 	}
+	std::lock_guard<std::mutex> lock(m_dataMutex);
 	for (size_t index = 0; index < m_fileRowData.size(); ++index)
 	{
 		const FileRow& row = m_fileRowData[index];
@@ -872,15 +943,8 @@ void CsteamcloudDlg::OnDestroy()
 	{
 		if (m_hWorkerProcess && m_hRequestPipe)
 		{
-			const char* exitCmd = "exit\n";
-			DWORD bytesWritten = 0;
-			while (pipeblocked == true)
-			{
-				Sleep(100); // Wait until the pipe is not blocked
-			}
-			pipeblocked = true; // Set the flag to indicate the pipe is blocked
-			Sleep(100); // Ensure the pipe is ready to write
-			if (WriteFile(m_hRequestPipe, exitCmd, (DWORD)strlen(exitCmd), &bytesWritten, NULL))
+			std::string response;
+			if (SendCommandAndReadResponse("exit\n", 3000, response))
 			{
 				Sleep(200); // Wait for the worker process to handle the exit command
 
@@ -893,7 +957,6 @@ void CsteamcloudDlg::OnDestroy()
 			}
 		}
 		init = false;
-		pipeblocked = false; // Reset the flag
 	}
 	m_RequestThreadEnabled = false;
 	m_ResponseThreadEnabled = false;
@@ -1279,42 +1342,42 @@ PCHAR* CsteamcloudDlg::CommandLineToArgvA(PCHAR CmdLine,int* _argc)
 
 void CsteamcloudDlg::OnBnClickedConnect()
 {
-	if (active) return; // if another command is being processed, return immediately
-	active = true; // Set active flag to prevent multiple commands being processed at the same time
-	thread([this]() {
-		
-	if ((m_hWorkerProcess == NULL || m_hWorkerProcess == INVALID_HANDLE_VALUE) && (!m_ResponseThreadWaiting || !m_RequestThreadWaiting))
-	{
-		Sleep(300); // Ensure the pipes are ready.
-		if (!m_ResponseThreadWaiting || !m_RequestThreadWaiting)
-		{
-			::MessageBox(NULL,L"Pipe threads are not ready, please try again later.", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-			active = false; // Reset active flag
-			return;
-		}
-	}
-	// Obtain the AppID from the input field
+	if (!TryBeginAction()) return;
+
 	CString appidStr;
 	inputappid->GetWindowTextW(appidStr);
 	appidStr.Trim();
 	if (appidStr.IsEmpty()) {
 		::MessageBox(NULL,L"App ID is empty, please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		active = false; // Reset active flag
+		EndAction();
 		return;
 	}
 	for (int i = 0; i < appidStr.GetLength(); ++i) {
 		if (!isdigit(appidStr[i])) {
 			::MessageBox(NULL,L"App ID must be a number!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-			active = false; // Reset active flag
+			EndAction();
 			return;
 		}
 	}
 	int appid = _wtoi(appidStr);
 	if (appid < 1) {
 		::MessageBox(NULL,L"App ID must be greater than 0!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		active = false; // Reset active flag
+		EndAction();
 		return;
 	}
+
+	thread([this, appid]() {
+	if ((m_hWorkerProcess == NULL || m_hWorkerProcess == INVALID_HANDLE_VALUE) && (!m_ResponseThreadWaiting || !m_RequestThreadWaiting))
+	{
+		Sleep(300); // Ensure the pipes are ready.
+		if (!m_ResponseThreadWaiting || !m_RequestThreadWaiting)
+		{
+			PostAsyncMessage(L"ERROR", L"Pipe threads are not ready, please try again later.", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			EndAction();
+			return;
+		}
+	}
+
 	PostMessage(WM_CLEAR_LIST); // Clear the list before connecting
 	// If the worker process is not running, start it
 	if (m_hWorkerProcess == NULL)
@@ -1322,16 +1385,16 @@ void CsteamcloudDlg::OnBnClickedConnect()
 		if(GetProcessPIDByName(L"steam-worker.exe") != 0) {
 			KillAllSteamWorkerProcesses(); // Ensure no other worker processes are running
 			if(GetProcessPIDByName(L"steam-worker.exe") != 0) {
-				::MessageBox(NULL,L"Unable to kill steam-worker.exe process. Please try terminate it or restart PC.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-				active = false; // Reset active flag
+				PostAsyncMessage(L"Error", L"Unable to kill steam-worker.exe process. Please try terminate it or restart PC.", MB_OK | MB_ICONERROR | MB_TOPMOST);
+				EndAction();
 				return;
 			}
 		}
 		// Get TEMP path
 		WCHAR tempPath[MAX_PATH];
 		if (!GetEnvironmentVariableW(L"TEMP", tempPath, MAX_PATH)) {
-			::MessageBox(NULL,L"Cannot get TEMP path.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-			active = false; // Reset active flag
+			PostAsyncMessage(L"Error", L"Cannot get TEMP path.", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			EndAction();
 			return;
 		}
 		CString workerPath = CString(tempPath) + L"\\steam-worker.exe";
@@ -1347,18 +1410,18 @@ void CsteamcloudDlg::OnBnClickedConnect()
 			DeleteFileW(workerPath); // Remove Previous Version if exists - needed when steam-worker.exe is updated
 		}
 		if (!ExtractResourceToFile(AfxGetInstanceHandle(), MAKEINTRESOURCE(IDR_WORKER), RT_RCDATA, workerPath)) {
-			::MessageBox(NULL,L"Unable to extract steam-worker.exe!", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			PostAsyncMessage(L"Error", L"Unable to extract steam-worker.exe!", MB_OK | MB_ICONERROR | MB_TOPMOST);
 			DeleteFileW(workerPath); // Clean up the worker executable if extraction fails
-			active = false; // Reset active flag
+			EndAction();
 			return;
 		}
 		if (!PathFileExistsW(dllPath)) {
 			DeleteFileW(dllPath); // Remove Previous Version if exists - needed when dll is updated
 		}
 		if (!ExtractResourceToFile(AfxGetInstanceHandle(), MAKEINTRESOURCE(IDR_STEAMDLL), RT_RCDATA, dllPath)) {
-			::MessageBox(NULL,L"Cannot extract steam_api DLL!", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			PostAsyncMessage(L"Error", L"Cannot extract steam_api DLL!", MB_OK | MB_ICONERROR | MB_TOPMOST);
 			DeleteFileW(workerPath); // Clean up the worker executable if DLL extraction fails
-			active = false; // Reset active flag
+			EndAction();
 			return;
 		}
 
@@ -1366,8 +1429,8 @@ void CsteamcloudDlg::OnBnClickedConnect()
 		PROCESS_INFORMATION pi;
 		STARTUPINFOW si = { sizeof(si) };
 		if (!CreateProcessW(workerPath, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
-			::MessageBox(NULL,L"Failed to start steam-worker.exe", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-			active = false; // Reset active flag
+			PostAsyncMessage(L"Error", L"Failed to start steam-worker.exe", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			EndAction();
 			return;
 		}
 		while(m_ResponseThreadWaiting)
@@ -1379,51 +1442,44 @@ void CsteamcloudDlg::OnBnClickedConnect()
 		// Wait for the worker to send "READY" message - this is crucial to ensure the worker is ready before sending any commands
 		std::string output;
 		const DWORD timeoutMs = 10000;
-
-		if (!ReadFromPipeWithTimeout(timeoutMs, output))
+		bool gotReady = false;
 		{
-			::MessageBox(NULL,L"Worker doesn't respond within 10s.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			std::lock_guard<std::mutex> lock(m_pipeIoMutex);
+			gotReady = ReadFromPipeWithTimeout(timeoutMs, output);
+		}
+		if (!gotReady)
+		{
+			PostAsyncMessage(L"Error", L"Worker doesn't respond within 10s.", MB_OK | MB_ICONERROR | MB_TOPMOST);
 			TerminateProcess(m_hWorkerProcess, 1);
 			CloseHandle(m_hWorkerProcess);
 			m_hWorkerProcess = NULL;
-			active = false; // Reset active flag
+			EndAction();
 			return;
 		}
 
 		if (output != "READY")
 		{
-			::MessageBox(NULL,L"Worker didn't send READY", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			PostAsyncMessage(L"Error", L"Worker didn't send READY", MB_OK | MB_ICONERROR | MB_TOPMOST);
 			TerminateProcess(m_hWorkerProcess, 1);
 			CloseHandle(m_hWorkerProcess);
 			m_hWorkerProcess = NULL;
-			active = false; // Reset active flag
+			EndAction();
 			return;
 		}
 	}
 	Sleep(400); // Ensure the worker is ready to receive commands
-	// Send the connect command to the worker with the specified AppID
-	std::string cmd = "connect " + std::to_string(appid) + "\n";
-	DWORD bytesWritten = 0;
-	while (pipeblocked == true)
-	{
-		Sleep(100); // Wait until the pipe is not blocked
-	}
-	pipeblocked = true; // Set the flag to indicate the pipe is blocked
-	Sleep(100); // Ensure the pipe is ready to write
-	if (!WriteFile(m_hRequestPipe, cmd.c_str(), (DWORD)cmd.length(), &bytesWritten, NULL)) {
-		pipeblocked = false; // Reset the flag
-		::MessageBox(NULL,L"Can't write to pipe.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		active = false; // Reset active flag
+	std::wstring statusMessage;
+	if (!EnsureWorkerIdle(statusMessage)) {
+		PostAsyncMessage(L"Worker busy", statusMessage.c_str(), MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
+		EndAction();
 		return;
 	}
-	pipeblocked = false; // Reset the flag
-	// Wait for a response from the worker within 5seconds
+	// Send the connect command to the worker with the specified AppID
+	std::string cmd = "connect " + std::to_string(appid) + "\n";
 	string response;
-	if (!ReadFromPipeWithTimeout(5000, response))
-	{
-		// If we reach here and gotReply is still false, it means we timed out waiting for a reply
-		::MessageBox(NULL,L"No response from worker", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		active = false; // Reset active flag
+	if (!SendCommandAndReadResponse(cmd, 5000, response)) {
+		PostAsyncMessage(L"Error", L"Can't write to pipe.", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		EndAction();
 		return;
 	}
 
@@ -1437,8 +1493,8 @@ void CsteamcloudDlg::OnBnClickedConnect()
 				PostMessage(WM_ENABLE_CONTROL, 0, 0); // Enable controls after successful connection
 				PostMessage(WM_UPDATE_COMBOBOX, 0, 0); // Update the AppID combo box
 				init = true;
-				active = false;
-				GetFiles(); // Reset active flag
+				EndAction();
+				PostMessage(WM_REQUEST_GETFILES, 0, 0);
 				return;
 			}
 			else if (status == "SteamAPI_Init failed" || status == "SteamAPI not initialized") {
@@ -1446,9 +1502,8 @@ void CsteamcloudDlg::OnBnClickedConnect()
 				PostMessage(WM_DISABLE_CONTROL, 0, 0); // Disable controls if initialization failed
 				PostMessage(WM_CLEAR_LIST, 0, 0); // Clear the file list
 				init = false;
-				active = false; // Reset active flag
-				CString msg(status.c_str());
-				::MessageBox(NULL, msg, L"SteamAPI Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+				EndAction();
+				PostAsyncMessage(L"SteamAPI Error", CA2W(status.c_str()), MB_OK | MB_ICONERROR | MB_TOPMOST);
 				return;
 			}
 		}
@@ -1456,19 +1511,18 @@ void CsteamcloudDlg::OnBnClickedConnect()
 		PostMessage(WM_DISABLE_CONTROL, 0, 0); // Disable controls if initialization failed
 		PostMessage(WM_CLEAR_LIST, 0, 0); // Clear the file list
 		init = false;
-		active = false; // Reset active flag
-		CString jsonStr(response.c_str());
-		::MessageBox(NULL,jsonStr, L"Worker Response", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		EndAction();
+		PostAsyncMessage(L"Worker Response", CA2W(response.c_str()), MB_OK | MB_ICONERROR | MB_TOPMOST);
 		return;
 	}
 	catch (const std::exception& e) {
 		PostMessage(WM_DISABLE_CONTROL, 0, 0); // Disable controls if initialization failed
 		PostMessage(WM_CLEAR_LIST, 0, 0); // Clear the file list
 		init = false;
-		active = false; // Reset active flag
 		CString msg;
 		msg.Format(L"Error when parsing JSON: %S", e.what());
-		::MessageBox(NULL,msg, L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		EndAction();
+		PostAsyncMessage(L"Error", msg, MB_OK | MB_ICONERROR | MB_TOPMOST);
 		return;
 	}
 	}).detach(); // Detach the thread to allow it to run independently
@@ -1477,271 +1531,205 @@ void CsteamcloudDlg::OnBnClickedConnect()
 
 void CsteamcloudDlg::OnBnClickedDelete()
 {
-	if (active) return; // if another command is being processed, return immediately
-	active = true; // Set active flag to prevent multiple commands being processed at the same time
+	if (!TryBeginAction()) return;
+
 	if(!init)
 	{
-		// this should not happen, but just in case
 		::MessageBox(NULL,L"Please connect to Steam first!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		active = false; // Reset active flag
-		return;
-	}
-	int files[25] = { -1 };
-	fill_n(files, 25, -1);
-	int count = 0;
-	int mark = -1;
-	POSITION pos = listfiles->GetFirstSelectedItemPosition();
-	if (pos == NULL)
-	{
-		::MessageBox(NULL,L"No file is selected! Please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		active = false; // Reset active flag
+		EndAction();
 		return;
 	}
 
-	mark = listfiles->GetNextSelectedItem(pos);
-	while (mark != -1)
+	std::vector<std::string> selectedNames;
 	{
-		if (count == 25) break;
-		files[count++] = mark;
-		mark = listfiles->GetNextSelectedItem(pos);
-	}
-
-	// Making delete command
-	std::ostringstream cmd;
-	cmd << "delete ";
-	for (int i = 0; i < count; ++i)
-	{
-		CString nameW = listfiles->GetItemText(files[i], 0);
-		CT2A nameA(nameW);
-		cmd << nameA;
-		if (i != count - 1) cmd << ";";
-	}
-
-	std::string command = cmd.str();
-	DWORD written = 0;
-	while (pipeblocked == true)
-	{
-		Sleep(100); // Wait until the pipe is not blocked
-	}
-	pipeblocked = true; // Set the flag to indicate the pipe is blocked
-	Sleep(100); // Ensure the pipe is ready to write
-	if (!WriteFile(m_hRequestPipe, command.c_str(), (DWORD)command.size(), &written, NULL))
-	{
-		pipeblocked = false; // Reset the flag
-		::MessageBox(NULL,L"Failed to send delete command to worker!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		active = false; // Reset active flag
-		return;
-	}
-	pipeblocked = false; // Reset the flag
-	// waiting for response from worker
-	std::string output;
-	if (!ReadFromPipeWithTimeout(5000, output))
-	{
-		::MessageBox(NULL,L"Timeout while waiting for delete response!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		active = false; // Reset active flag
-		return;
-	}
-
-	// Parsing JSON
-	using json = nlohmann::json;
-	CString result;
-	try {
-		auto j = json::parse(output);
-
-		if (j.is_array() && j.empty()) {
-			active = false; // Reset active flag
-			return; // Do not show a message box if no files were deleted
-		}
-		for (auto& entry : j)
+		int files[25] = { -1 };
+		fill_n(files, 25, -1);
+		int count = 0;
+		int mark = -1;
+		POSITION pos = listfiles->GetFirstSelectedItemPosition();
+		if (pos == NULL)
 		{
-			std::string name = entry.value("name", "");
-			bool deleted = entry.value("deleted", false);
-			CString line;
-			line.Format(L"%S: %s\n", name.c_str(), deleted ? L"Deleted" : L"Failed");
-			result += line;
+			::MessageBox(NULL,L"No file is selected! Please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			EndAction();
+			return;
+		}
+
+		mark = listfiles->GetNextSelectedItem(pos);
+		while (mark != -1)
+		{
+			if (count == 25) break;
+			files[count++] = mark;
+			mark = listfiles->GetNextSelectedItem(pos);
+		}
+
+		for (int i = 0; i < count; ++i)
+		{
+			CString nameW = listfiles->GetItemText(files[i], 0);
+			CT2A nameA(nameW);
+			selectedNames.emplace_back(nameA);
 		}
 	}
-	catch (std::exception& e) {
-		CString err;
-		err.Format(L"Failed to parse JSON: %S", e.what());
-		::MessageBox(NULL,err, L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		active = false; // Reset active flag
-		return;
-	}
-	active = false; // Reset active flag
-	Clearlist();
-	GetFiles();
-	::MessageBox(NULL,result, L"Delete result", MB_OK | MB_TOPMOST);
+
+	thread([this, selectedNames]() {
+		std::wstring statusMessage;
+		if (!EnsureWorkerIdle(statusMessage)) {
+			PostAsyncMessage(L"Worker busy", statusMessage.c_str(), MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
+			EndAction();
+			return;
+		}
+
+		std::ostringstream cmd;
+		cmd << "delete ";
+		for (size_t i = 0; i < selectedNames.size(); ++i)
+		{
+			cmd << selectedNames[i];
+			if (i + 1 < selectedNames.size()) cmd << ";";
+		}
+
+		std::string output;
+		if (!SendCommandAndReadResponse(cmd.str(), 5000, output))
+		{
+			PostAsyncMessage(L"ERROR", L"Failed to send delete command to worker!", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			EndAction();
+			return;
+		}
+
+		CString result;
+		try {
+			auto j = json::parse(output);
+
+			if (j.is_array() && j.empty()) {
+				EndAction();
+				return;
+			}
+			for (auto& entry : j)
+			{
+				std::string name = entry.value("name", "");
+				bool deleted = entry.value("deleted", false);
+				CString line;
+				line.Format(L"%S: %s\n", name.c_str(), deleted ? L"Deleted" : L"Failed");
+				result += line;
+			}
+		}
+		catch (std::exception& e) {
+			CString err;
+			err.Format(L"Failed to parse JSON: %S", e.what());
+			PostAsyncMessage(L"ERROR", err, MB_OK | MB_ICONERROR | MB_TOPMOST);
+			EndAction();
+			return;
+		}
+		EndAction();
+		PostMessage(WM_CLEAR_LIST, 0, 0);
+		PostMessage(WM_REQUEST_GETFILES, 0, 0);
+		PostAsyncMessage(L"Delete result", result, MB_OK | MB_TOPMOST);
+	}).detach();
 }
 
 
 void CsteamcloudDlg::OnBnClickedUpload()
 {
-	if (active) return; // if another command is being processed, return immediately
-	active = true; // Set active flag to prevent multiple commands being processed at the same time
-	thread([this]() {
-		
-		
+	if (!TryBeginAction()) return;
 	if (!init)
 	{
-		// this should not happen, but just in case
 		::MessageBox(NULL,L"Please connect to Steam first!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		EndAction();
 		return;
 	}
-	bool fileopened[MAX_FILES_COUNT] = { false };
-	bool filesizeok[MAX_FILES_COUNT] = { false };
-	wchar_t filelist[MAX_FILES_COUNT][MAX_PATH] = { 0 };
-	wchar_t filename[MAX_FILES_COUNT][MAX_PATH] = { 0 };
-	wchar_t dirname[MAX_PATH] = { 0 };
-	int filecount = 0;
-	CString filenames;
-	DWORD maxfiles = 10;
-	fstream file;
 
-	// Create a file dialog to select files for upload
+	CString buffer;
+	const DWORD size = MAX_UNICODE_PATH + (MAX_PATH * MAX_FILES_COUNT);
+	buffer.GetBufferSetLength(size);
 	CFileDialog dlg(TRUE, NULL, NULL,
 		OFN_ALLOWMULTISELECT | OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_NONETWORKBUTTON | OFN_PATHMUSTEXIST,
 		L"All Files (*.*)|*.*||", this);
 	OPENFILENAMEW& ofn = dlg.GetOFN();
 	ofn.lStructSize = sizeof(OPENFILENAMEW);
 	ofn.hwndOwner = this->m_hWnd;
-
-	DWORD size = MAX_UNICODE_PATH + (MAX_PATH * MAX_FILES_COUNT);
-	filenames.GetBufferSetLength(size);
-	ofn.lpstrFile = filenames.GetBuffer();
+	ofn.lpstrFile = buffer.GetBuffer();
 	ofn.nMaxFile = size;
-	INT_PTR ressss = dlg.DoModal();
-	if (ressss != IDOK)
-	{ 
-		active = false; // Reset active flag
+	if (dlg.DoModal() != IDOK) {
+		EndAction();
 		return;
 	}
-	// Get the selected files and directory
-	int pos = -1;
-	pos = FindPosition(filenames.GetBuffer(), pos);
-	wcscpy_s(dirname, filenames.GetString());
 
-	for (UINT i = 0; i < MAX_FILES_COUNT; i++)
-	{
-		int prevpos = pos;
-		pos = FindPosition(filenames.GetBuffer(), pos);
-		if (pos == prevpos || pos == prevpos + 1 || pos == -1)
-		{
-			if (i == 0)
-			{
-				filecount++;
-				wcscpy_s(filelist[i], dirname);
-				wcscpy_s(filename[i], dlg.GetFileName().GetString());
-				wcscpy_s(dirname, dlg.GetFolderPath().GetString());
-			}
-			break;
+	std::vector<std::pair<std::string, std::string>> entries;
+	POSITION pos = dlg.GetStartPosition();
+	while (pos) {
+		CString fullPath = dlg.GetNextPathName(pos);
+		int slash = fullPath.ReverseFind(L'\\');
+		CString fileName = (slash >= 0) ? fullPath.Mid(slash + 1) : fullPath;
+		std::string cloudName = CT2A(fileName);
+		std::string localPath = CT2A(fullPath);
+		entries.emplace_back(cloudName, localPath);
+		if (entries.size() >= MAX_FILES_COUNT) break;
+	}
+
+	if (entries.empty()) {
+		EndAction();
+		return;
+	}
+
+	thread([this, entries]() {
+		std::wstring statusMessage;
+		if (!EnsureWorkerIdle(statusMessage)) {
+			PostAsyncMessage(L"Worker busy", statusMessage.c_str(), MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
+			EndAction();
+			return;
 		}
-		filecount++;
-		swprintf_s(filelist[i], L"%s\\%s", dirname, &filenames.GetBuffer()[prevpos + 1]);
-		swprintf_s(filename[i], L"%s", &filenames.GetBuffer()[prevpos + 1]);
-	}
 
-	// Create the upload command
-	std::ostringstream uploadCommand;
-	uploadCommand << "upload ";
-
-	for (int i = 0; i < filecount; ++i)
-	{
-		file.open(filelist[i], ios::in | ios::binary);
-		if (file.is_open())
-		{
-			fileopened[i] = true;
-			file.seekg(0, std::ios::end);
-			ULONG length = (ULONG)file.tellg();
-			file.seekg(0, std::ios::beg);
-
-			if (length >= 102400000)
-			{
-				filesizeok[i] = false;
-				file.close();
-				continue;
-			}
-			filesizeok[i] = true;
-			char cloudName[MAX_PATH];
-			wcstombs(cloudName, filename[i], sizeof(cloudName));
-
-			char localPath[MAX_PATH];
-			wcstombs(localPath, filelist[i], sizeof(localPath));
-
-			uploadCommand << cloudName << "," << localPath;
-			if (i < filecount - 1)
-				uploadCommand << ";";
-
-			file.close();
+		std::ostringstream uploadCommand;
+		uploadCommand << "upload ";
+		for (size_t i = 0; i < entries.size(); ++i) {
+			uploadCommand << entries[i].first << "," << entries[i].second;
+			if (i + 1 < entries.size()) uploadCommand << ";";
 		}
-	}
 
-	// Send the upload command to the worker
-	std::string commandStr = uploadCommand.str();
-	DWORD bytesWritten = 0;
-	while (pipeblocked == true)
-	{
-		Sleep(100); // Wait until the pipe is not blocked
-	}
-	pipeblocked = true; // Set the flag to indicate the pipe is blocked
-	Sleep(100); // Ensure the pipe is ready to write
-	if (!WriteFile(m_hRequestPipe, commandStr.c_str(), (DWORD)commandStr.size(), &bytesWritten, NULL))
-	{
-		pipeblocked = false; // Reset the flag
-		active = false; // Reset active flag
-		::MessageBox(NULL,L"Unable to write to pipe!", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		return;
-	}
-	pipeblocked = false; // Reset the flag
-	// Wait for a response from the worker
-	std::string output;
-	if (!ReadFromPipeWithTimeout(10000, output))
-	{
-		active = false; // Reset active flag
-		::MessageBox(NULL,L"Unable to read response from pipe.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		return;
-	}
-
-	// Parse the JSON response
-	CString msg;
-	try {
-		auto j = json::parse(output);
-		for (const auto& entry : j)
+		std::string output;
+		if (!SendCommandAndReadResponse(uploadCommand.str(), 10000, output))
 		{
-			if (entry.contains("error"))
+			PostAsyncMessage(L"Error", L"Unable to write to pipe!", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			EndAction();
+			return;
+		}
+
+		CString msg;
+		try {
+			auto j = json::parse(output);
+			for (const auto& entry : j)
 			{
-				CString namePart;
-				if (entry.contains("name")) {
-					namePart = CString(entry["name"].get<std::string>().c_str()) + L": ";
+				if (entry.contains("error"))
+				{
+					CString namePart;
+					if (entry.contains("name")) {
+						namePart = CString(entry["name"].get<std::string>().c_str()) + L": ";
+					}
+					else if (entry.contains("input")) {
+						namePart = CString(entry["input"].get<std::string>().c_str()) + L": ";
+					}
+					msg += namePart + CString(entry["error"].get<std::string>().c_str()) + L"\r\n";
 				}
-				else if (entry.contains("input")) {
-					namePart = CString(entry["input"].get<std::string>().c_str()) + L": ";
+				else if (entry.contains("name") && entry.contains("size"))
+				{
+					msg += CString(entry["name"].get<std::string>().c_str()) + L": uploaded (" +
+						std::to_wstring(entry["size"].get<int>()).c_str() + L" bytes)\r\n";
 				}
-				msg += namePart + CString(entry["error"].get<std::string>().c_str()) + L"\r\n";
-			}
-			else if (entry.contains("name") && entry.contains("size"))
-			{
-				msg += CString(entry["name"].get<std::string>().c_str()) + L": uploaded (" +
-					std::to_wstring(entry["size"].get<int>()).c_str() + L" bytes)\r\n";
-			}
-			else
-			{
-				msg += L"Unknown entry format in response.\r\n";
+				else
+				{
+					msg += L"Unknown entry format in response.\r\n";
+				}
 			}
 		}
-	}
-	catch (...) {
-		active = false; // Reset active flag
-		::MessageBox(NULL,L"Answer from worker is not valid JSON!", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		return;
-	}
+		catch (...) {
+			PostAsyncMessage(L"Error", L"Answer from worker is not valid JSON!", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			EndAction();
+			return;
+		}
 
-	if (!msg.IsEmpty()) {
-		::MessageBox(NULL,msg, L"Upload results", MB_OK | MB_TOPMOST);
-	}
-
-	active = false; // Reset active flag
-	GetFiles();
+		EndAction();
+		if (!msg.IsEmpty()) {
+			PostAsyncMessage(L"Upload results", msg, MB_OK | MB_TOPMOST);
+		}
+		PostMessage(WM_REQUEST_GETFILES, 0, 0);
 	}).detach();
 }
 
@@ -1749,259 +1737,196 @@ void CsteamcloudDlg::OnBnClickedUpload()
 
 void CsteamcloudDlg::OnBnClickedDirupload()
 {
-	if (active) return; // if another command is being processed, return immediately
-	active = true; // Set active flag to prevent multiple commands being processed at the same time
-	thread([this] {
+	if (!TryBeginAction()) return;
 	if (!init)
 	{
-		// this should not happen, but just in case
 		::MessageBox(NULL,L"Please connect to Steam first!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		active = false; // Reset active flag
+		EndAction();
 		return;
 	}
-	bool emptydir = true;
-	prompt dialog(this);
-	wchar_t filelist[MAX_FILES_COUNT][MAX_PATH] = { 0 };
-	wchar_t filename[MAX_FILES_COUNT][MAX_PATH] = { 0 };
-	wchar_t dirname[MAX_PATH] = { 0 };
-	wchar_t dirupload[MAX_PATH] = { 0 };
-	int filecount = 0;
-	CString filenames;
-	DWORD maxfiles = 10;
 
-	wchar_t* pFile = nullptr;
-	wchar_t szFilter[] = L"All Files (*.*)|*.*||";
+	prompt promptDialog(this);
+	if (promptDialog.DoModal() != IDOK) {
+		EndAction();
+		return;
+	}
+
+	CString cloudPrefix = returned == nullptr ? L"" : returned;
+	cloudPrefix.Trim();
+	cloudPrefix.Replace(L"\\", L"/");
+	while (!cloudPrefix.IsEmpty() && cloudPrefix.Right(1) == L"/") {
+		cloudPrefix = cloudPrefix.Left(cloudPrefix.GetLength() - 1);
+	}
+
+	CString buffer;
+	const DWORD size = MAX_UNICODE_PATH + (MAX_PATH * MAX_FILES_COUNT);
+	buffer.GetBufferSetLength(size);
 	CFileDialog dlg(TRUE, NULL, NULL,
-		OFN_ALLOWMULTISELECT | OFN_EXPLORER | OFN_FILEMUSTEXIST |
-		OFN_NONETWORKBUTTON | OFN_PATHMUSTEXIST, szFilter, this);
+		OFN_ALLOWMULTISELECT | OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_NONETWORKBUTTON | OFN_PATHMUSTEXIST,
+		L"All Files (*.*)|*.*||", this);
 	OPENFILENAMEW& ofn = dlg.GetOFN();
 	ofn.lStructSize = sizeof(OPENFILENAMEW);
 	ofn.hwndOwner = this->m_hWnd;
-
-	DWORD size = MAX_UNICODE_PATH + (MAX_PATH * MAX_FILES_COUNT);
-	filenames.GetBufferSetLength(size);
-	ofn.lpstrFile = filenames.GetBuffer();
+	ofn.lpstrFile = buffer.GetBuffer();
 	ofn.nMaxFile = size;
-
-	if (dialog.DoModal() == IDOK)
-	{
-		if (wcscmp(returned, L"") != 0)
-		{
-			wcscpy_s(dirupload, returned);
-			emptydir = true;
-
-			// Convert backslashes to forward slashes
-			for (int i = 0; dirupload[i]; ++i)
-			{
-				if (dirupload[i] == L'\\')
-					dirupload[i] = L'/';
-			}
-
-			// Delete trailing slashes
-			size_t len = wcslen(dirupload);
-			while (len > 0 && dirupload[len - 1] == L'/')
-			{
-				dirupload[len - 1] = L'\0';
-				--len;
-			}
-		}
-		else
-		{
-			wcscpy_s(dirupload, L"");
-			emptydir = false;
-		}
-		if (dlg.DoModal() == IDOK)
-		{
-			int pos = -1;
-			pos = FindPosition(filenames.GetBuffer(), pos);
-			wcscpy_s(dirname, filenames.GetString());
-
-			for (UINT i = 0; i < MAX_FILES_COUNT; i++)
-			{
-				int prevpos = pos;
-				pos = FindPosition(filenames.GetBuffer(), pos);
-				if (pos == prevpos || pos == prevpos + 1 || pos == -1)
-				{
-					if (i == 0)
-					{
-						filecount++;
-						wcscpy_s(filelist[i], dirname);
-						memset(dirname, 0, sizeof(dirname));
-						wcscpy_s(filename[i], dlg.GetFileName().GetString());
-						if (wcslen(dirupload) > 0)
-						{
-							wchar_t tmp[MAX_PATH];
-							swprintf_s(tmp, L"%s/%s", dirupload, filename[i]);
-							wcscpy_s(filename[i], tmp);
-							swprintf_s(filelist[i], L"%s\\%s", dlg.GetFolderPath().GetString(), dlg.GetFileName().GetString());
-						}
-						else
-						{
-							wcscpy_s(dirname, dlg.GetFolderPath().GetString());
-						}
-					}
-					break;
-				}
-				filecount++;
-				if (wcslen(dirupload) > 0)
-					swprintf_s(filename[i], L"%s/%s", dirupload, &filenames.GetBuffer()[prevpos + 1]);
-				else
-					swprintf_s(filename[i], L"%s", &filenames.GetBuffer()[prevpos + 1]);
-
-				swprintf_s(filelist[i], L"%s\\%s", dirname, &filenames.GetBuffer()[prevpos + 1]);
-			}
-
-			// Making the upload command
-			std::ostringstream uploadCommand;
-			uploadCommand << "upload ";
-			for (int i = 0; i < filecount; i++)
-			{
-				if (i > 0) uploadCommand << ";";
-				CT2A cloudName(filename[i]);
-				CT2A localPath(filelist[i]);
-				uploadCommand << cloudName.m_psz << "," << localPath.m_psz;
-			}
-
-			DWORD written;
-			std::string commandStr = uploadCommand.str();
-			while (pipeblocked == true)
-			{
-				Sleep(100); // Wait until the pipe is not blocked
-			}
-			pipeblocked = true; // Set the flag to indicate the pipe is blocked
-			Sleep(100); // Ensure the pipe is ready to write
-			if (!WriteFile(m_hRequestPipe, commandStr.c_str(), (DWORD)commandStr.size(), &written, NULL))
-			{
-				pipeblocked = false; // Reset the flag
-				::MessageBox(NULL,L"Unable to write to pipe!", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-				active = false; // Reset active flag
-				return;
-			}
-			pipeblocked = false; // Reset the flag
-			std::string response;
-			if (!ReadFromPipeWithTimeout(5000, response))
-			{
-				::MessageBox(NULL,L"Timeout while uploading files", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-				active = false; // Reset active flag
-				return;
-			}
-
-			try
-			{
-				json parsed = json::parse(response);
-				std::wstring output;
-
-				for (auto& entry : parsed)
-				{
-					std::wstring name;
-					if (entry.contains("name"))
-						name = CA2W(entry["name"].get<std::string>().c_str());
-					else if (entry.contains("input"))
-						name = CA2W(entry["input"].get<std::string>().c_str());
-					else
-						name = L"<unknown>";
-
-					output += name;
-
-					if (entry.contains("error"))
-					{
-						output += L" - ";
-						output += CA2W(entry["error"].get<std::string>().c_str());
-					}
-					else if (entry.contains("status") && entry["status"] == "uploaded")
-					{
-						output += L": uploaded (" + std::to_wstring(entry["size"].get<int>()) + L" bytes)";
-					}
-
-					output += L"\r\n";
-				}
-
-				if (!output.empty())
-					::MessageBox(NULL,output.c_str(), L"Upload result", MB_OK | MB_TOPMOST);
-			}
-			catch (...)
-			{
-				::MessageBox(NULL,L"Failed to parse response", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-			}
-		}
+	if (dlg.DoModal() != IDOK) {
+		EndAction();
+		return;
 	}
-	active = false; // Reset active flag
-	GetFiles(); // Refresh the file list after upload
+
+	std::vector<std::pair<std::string, std::string>> entries;
+	POSITION pos = dlg.GetStartPosition();
+	while (pos) {
+		CString fullPath = dlg.GetNextPathName(pos);
+		int slash = fullPath.ReverseFind(L'\\');
+		CString cloudName = (slash >= 0) ? fullPath.Mid(slash + 1) : fullPath;
+		if (!cloudPrefix.IsEmpty()) {
+			cloudName = cloudPrefix + L"/" + cloudName;
+		}
+		entries.emplace_back(std::string(CT2A(cloudName)), std::string(CT2A(fullPath)));
+		if (entries.size() >= MAX_FILES_COUNT) break;
+	}
+
+	if (entries.empty()) {
+		EndAction();
+		return;
+	}
+
+	thread([this, entries]() {
+		std::wstring statusMessage;
+		if (!EnsureWorkerIdle(statusMessage)) {
+			PostAsyncMessage(L"Worker busy", statusMessage.c_str(), MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
+			EndAction();
+			return;
+		}
+
+		std::ostringstream uploadCommand;
+		uploadCommand << "upload ";
+		for (size_t i = 0; i < entries.size(); i++)
+		{
+			uploadCommand << entries[i].first << "," << entries[i].second;
+			if (i + 1 < entries.size()) uploadCommand << ";";
+		}
+
+		std::string response;
+		if (!SendCommandAndReadResponse(uploadCommand.str(), 10000, response))
+		{
+			PostAsyncMessage(L"Error", L"Unable to write to pipe!", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			EndAction();
+			return;
+		}
+
+		try
+		{
+			json parsed = json::parse(response);
+			CString output;
+
+			for (auto& entry : parsed)
+			{
+				CString name;
+				if (entry.contains("name"))
+					name = CA2W(entry["name"].get<std::string>().c_str());
+				else if (entry.contains("input"))
+					name = CA2W(entry["input"].get<std::string>().c_str());
+				else
+					name = L"<unknown>";
+
+				output += name;
+
+				if (entry.contains("error"))
+				{
+					output += L" - ";
+					output += CA2W(entry["error"].get<std::string>().c_str());
+				}
+				else if (entry.contains("status") && entry["status"] == "uploaded")
+				{
+					output += L": uploaded (" + CString(std::to_wstring(entry["size"].get<int>()).c_str()) + L" bytes)";
+				}
+
+				output += L"\r\n";
+			}
+
+			if (!output.IsEmpty())
+				PostAsyncMessage(L"Upload result", output, MB_OK | MB_TOPMOST);
+		}
+		catch (...)
+		{
+			PostAsyncMessage(L"ERROR", L"Failed to parse response", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			EndAction();
+			return;
+		}
+
+		EndAction();
+		PostMessage(WM_REQUEST_GETFILES, 0, 0);
 	}).detach();
 }
 
 void CsteamcloudDlg::OnBnClickedDownload()
 {
-	if (active) return; // if another command is being processed, return immediately
-	active = true; // Set active flag to prevent multiple commands being processed at the same time
-	thread([this]() {
-		if (!init)
-		{
-			// this should not happen, but just in case
-			::MessageBox(NULL,L"Please connect to Steam first!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-			active = false; // Reset active flag
+	if (!TryBeginAction()) return;
+	if (!init)
+	{
+		::MessageBox(NULL,L"Please connect to Steam first!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		EndAction();
+		return;
+	}
+
+	constexpr int MAX_SELECTED = 10;
+	int selectedIndices[MAX_SELECTED];
+	int count = 0;
+	POSITION pos = listfiles->GetFirstSelectedItemPosition();
+	while (pos && count < MAX_SELECTED)
+	{
+		int index = listfiles->GetNextSelectedItem(pos);
+		selectedIndices[count++] = index;
+	}
+
+	if (count == 0)
+	{
+		::MessageBox(NULL,L"No file is selected! Please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		EndAction();
+		return;
+	}
+
+	std::vector<CString> cloudPaths;
+	std::vector<CString> outputPaths;
+	CString targetDirectory;
+
+	if (count == 1)
+	{
+		CString cloudPath = listfiles->GetItemText(selectedIndices[0], 0);
+		CString fileName = cloudPath.Mid(cloudPath.ReverseFind(L'/') + 1);
+		CFileDialog filedialog(FALSE, NULL, fileName, OFN_OVERWRITEPROMPT | OFN_HIDEREADONLY, L"All Files (*.*)|*.*||");
+		if (filedialog.DoModal() != IDOK) {
+			EndAction();
 			return;
 		}
-		constexpr int MAX_SELECTED = 10;
-		int selectedIndices[MAX_SELECTED];
-		int count = 0;
-
-		// Get selected items from the list control
-		POSITION pos = listfiles->GetFirstSelectedItemPosition();
-		while (pos && count < MAX_SELECTED)
-		{
-			int index = listfiles->GetNextSelectedItem(pos);
-			selectedIndices[count++] = index;
-		}
-
-		if (count == 0)
-		{
-			::MessageBox(NULL,L"No file is selected! Please try again!", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
-			active = false; // Reset active flag
+		cloudPaths.push_back(cloudPath);
+		outputPaths.push_back(filedialog.GetPathName());
+	}
+	else
+	{
+		CFolderPickerDialog dialog(NULL, OFN_EXPLORER | OFN_NONETWORKBUTTON | OFN_PATHMUSTEXIST | OFN_CREATEPROMPT, this);
+		if (dialog.DoModal() != IDOK) {
+			EndAction();
 			return;
 		}
-
-		std::vector<CString> cloudPaths;
-		std::vector<CString> outputPaths;
-		CString targetDirectory;
-
-		// If only one file is selected, prefill filename and ask for output path
-		if (count == 1)
+		targetDirectory = dialog.GetFolderPath();
+		for (int i = 0; i < count; ++i)
 		{
-			CString cloudPath = listfiles->GetItemText(selectedIndices[0], 0);
-			CString fileName = cloudPath.Mid(cloudPath.ReverseFind(L'/') + 1);
-
-			CFileDialog filedialog(FALSE, NULL, fileName, OFN_OVERWRITEPROMPT | OFN_HIDEREADONLY, L"All Files (*.*)|*.*||");
-			if (filedialog.DoModal() != IDOK) {
-				active = false; // Reset active flag
-				return;
-			}
-			CString fullOutput = filedialog.GetPathName();
+			CString cloudPath = listfiles->GetItemText(selectedIndices[i], 0);
 			cloudPaths.push_back(cloudPath);
-			outputPaths.push_back(fullOutput);
 		}
-		else
-		{
-			// If multiple files are selected, ask for target directory
-			CFolderPickerDialog dialog(NULL, OFN_EXPLORER | OFN_NONETWORKBUTTON | OFN_PATHMUSTEXIST | OFN_CREATEPROMPT, this);
-			if (dialog.DoModal() != IDOK) {
-				active = false; // Reset active flag
-				return;
-			}
-			targetDirectory = dialog.GetFolderPath();
+	}
 
-			for (int i = 0; i < count; ++i)
-			{
-				CString cloudPath = listfiles->GetItemText(selectedIndices[i], 0);
-				CString fileName = cloudPath.Mid(cloudPath.ReverseFind(L'/') + 1);
-				CString fullPath = targetDirectory + L"\\" + fileName;
-
-				cloudPaths.push_back(cloudPath);
-				outputPaths.push_back(fullPath);
-			}
+	thread([this, cloudPaths, outputPaths, targetDirectory, count]() {
+		std::wstring statusMessage;
+		if (!EnsureWorkerIdle(statusMessage)) {
+			PostAsyncMessage(L"Worker busy", statusMessage.c_str(), MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
+			EndAction();
+			return;
 		}
 
-		// making download command with args
 		std::stringstream ss;
 		ss << "download ";
 		for (int i = 0; i < count; ++i)
@@ -2022,41 +1947,21 @@ void CsteamcloudDlg::OnBnClickedDownload()
 			CT2A output(targetDirectory);
 			ss << output;
 		}
-		std::string cmd = ss.str();
 
-		// sending command to worker
-		DWORD bytesWritten = 0;
-		while (pipeblocked == true)
-		{
-			Sleep(100); // Wait until the pipe is not blocked
-		}
-		pipeblocked = true; // Set the flag to indicate the pipe is blocked
-		Sleep(100); // Ensure the pipe is ready to write
-		if (!WriteFile(m_hRequestPipe, cmd.c_str(), (DWORD)cmd.length(), &bytesWritten, NULL))
-		{
-			pipeblocked = false; // Reset the flag
-			::MessageBox(NULL,L"Unable to write to pipe", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-			active = false; // Reset active flag
-			return;
-		}
-		pipeblocked = false; // Reset the flag
-		// Reading response from worker
 		std::string response;
-		if (!ReadFromPipeWithTimeout(10000, response))
+		if (!SendCommandAndReadResponse(ss.str(), 10000, response))
 		{
-			::MessageBox(NULL,L"Unable to get answer from worker.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-			active = false; // Reset active flag
+			PostAsyncMessage(L"Error", L"Unable to write to pipe", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			EndAction();
 			return;
 		}
-		//ss
+
 		try
 		{
-			using json = nlohmann::json;
 			json result = json::parse(response);
-
 			if (result.is_array() && result.empty()) {
-				active = false; // Reset active flag
-				return; // Don't display anything if the array is empty
+				EndAction();
+				return;
 			}
 			CString statusMsg;
 			for (const auto& item : result)
@@ -2067,7 +1972,6 @@ void CsteamcloudDlg::OnBnClickedDownload()
 
 				if (status.IsEmpty())
 				{
-					// If status is empty, check for error
 					if (item.contains("error"))
 					{
 						CString error = CA2W(item["error"].get<std::string>().c_str());
@@ -2080,17 +1984,17 @@ void CsteamcloudDlg::OnBnClickedDownload()
 				}
 				else
 				{
-					statusMsg += name + L": " + status + L" (" + std::to_wstring(size).c_str() + L" bytes)\r\n";
+					statusMsg += name + L": " + status + L" (" + CString(std::to_wstring(size).c_str()) + L" bytes)\r\n";
 				}
 			}
 
-			::MessageBox(NULL,statusMsg, L"Download status", MB_OK | MB_TOPMOST);
+			PostAsyncMessage(L"Download status", statusMsg, MB_OK | MB_TOPMOST);
 		}
 		catch (...)
 		{
-			::MessageBox(NULL,L"Error on parsing JSON response.", L"ERROR", MB_OK | MB_ICONERROR | MB_TOPMOST);
+			PostAsyncMessage(L"ERROR", L"Error on parsing JSON response.", MB_OK | MB_ICONERROR | MB_TOPMOST);
 		}
-		active = false; // Reset active flag
+		EndAction();
 	}).detach();
 }
 
@@ -2152,7 +2056,6 @@ void CsteamcloudDlg::KillAllSteamWorkerProcesses()
 void CsteamcloudDlg::OnBnClickedRefresh()
 {
 	Clearlist(); // Clear the list before refreshing
-	Sleep(100); // Give some time to ensure the list is cleared
 	if (!init)
 	{
 		// this should not happen, but just in case
@@ -2164,64 +2067,49 @@ void CsteamcloudDlg::OnBnClickedRefresh()
 
 void CsteamcloudDlg::OnBnClickedDisconnect()
 {
-	if (active) return; // if another command is being processed, return immediately
-	active = true; // Set active flag to prevent multiple commands being processed at the same time
-	if (!init) return; // If not initialized, do nothing
-	// Attempt to send exit command to worker process
-	if (m_hWorkerProcess && m_hRequestPipe)
-	{
-		const char* exitCmd = "exit\n";
-		DWORD bytesWritten = 0;
-		while (pipeblocked == true)
-		{
-			Sleep(100); // Wait until the pipe is not blocked
+	if (!TryBeginAction()) return;
+	thread([this]() {
+		if (!init) {
+			EndAction();
+			return;
 		}
-		pipeblocked = true; // Set the pipe to blocked state to prevent further writes until this command is processed
-		Sleep(100); // Ensure the pipe is ready to write
-		if (!WriteFile(m_hRequestPipe, exitCmd, (DWORD)strlen(exitCmd), &bytesWritten, NULL)) {
-			::MessageBox(NULL,L"Unable to write to pipe (exit).", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-		}
-		else
-		{
-			Sleep(200); // Wait for a short time to allow the worker to process the exit command
 
-			DWORD result = WaitForSingleObject(m_hWorkerProcess, 0);
-			if (result == WAIT_TIMEOUT)
-			{
-				// If the worker process is still running, we will try to terminate it
-				if (!TerminateProcess(m_hWorkerProcess, 1)) {
-					// This should never happen, but if it does, we inform the user
-					::MessageBox(NULL,L"The worker process cannot be terminated manually.", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-				}
-				else {
-					//::MessageBox(NULL,L"Worker was terminated manually. Disconnected", L"Info", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
-				}
+		std::wstring statusMessage;
+		if (!EnsureWorkerIdle(statusMessage)) {
+			PostAsyncMessage(L"Worker busy", statusMessage.c_str(), MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
+			EndAction();
+			return;
+		}
+
+		if (m_hWorkerProcess && m_hRequestPipe)
+		{
+			std::string response;
+			if (!SendCommandAndReadResponse("exit\n", 3000, response)) {
+				PostAsyncMessage(L"Error", L"Unable to write to pipe (exit).", MB_OK | MB_ICONERROR | MB_TOPMOST);
 			}
 			else {
-				//::MessageBox(NULL,L"Worker has ended successfully. Disconnected.", L"Info", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
+				Sleep(200);
+				DWORD result = WaitForSingleObject(m_hWorkerProcess, 0);
+				if (result == WAIT_TIMEOUT)
+				{
+					if (!TerminateProcess(m_hWorkerProcess, 1)) {
+						PostAsyncMessage(L"Error", L"The worker process cannot be terminated manually.", MB_OK | MB_ICONERROR | MB_TOPMOST);
+					}
+				}
 			}
 		}
-	}
-	pipeblocked = false; // Reset the pipe blocked state after sending the exit command
-	::MessageBox(NULL,L"Disconnected from Steam Cloud.", L"Info", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
-	init = false; // Reset the initialization flag
-	// Close worker process handle if it exists
-	if (m_hWorkerProcess)
-	{
-		CloseHandle(m_hWorkerProcess);
-		m_hWorkerProcess = NULL;
-	}
 
-	// Reset UI elements
-	download->EnableWindow(0);
-	deletefile->EnableWindow(0);
-	upload->EnableWindow(0);
-	uploaddir->EnableWindow(0);
-	refresh->EnableWindow(0);
-	quota->ShowWindow(0);
-	disconnect->EnableWindow(0);
-	Clearlist();
-	active = false; // Reset active flag
+		PostAsyncMessage(L"Info", L"Disconnected from Steam Cloud.", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
+		init = false;
+		if (m_hWorkerProcess)
+		{
+			CloseHandle(m_hWorkerProcess);
+			m_hWorkerProcess = NULL;
+		}
+		PostMessage(WM_DISABLE_CONTROL, 0, 0);
+		PostMessage(WM_CLEAR_LIST, 0, 0);
+		EndAction();
+	}).detach();
 }
 
 
@@ -2460,14 +2348,24 @@ void CsteamcloudDlg::SaveComboBoxHistory()
 
 void CsteamcloudDlg::UpdateFileSizesDisplay()
 {
+	std::map<CString, int64_t> sizesCopy;
+	uint64_t quotaUsed = 0;
+	uint64_t quotaTotal = 0;
+	{
+		std::lock_guard<std::mutex> lock(m_dataMutex);
+		sizesCopy = m_fileSizesBytes;
+		quotaUsed = m_quotaUsed;
+		quotaTotal = m_quotaTotal;
+	}
+
 	int rowCount = listfiles->GetItemCount();
 
 	for (int i = 0; i < rowCount; ++i)
 	{
 		CString filename = listfiles->GetItemText(i, 0);
 
-		auto it = m_fileSizesBytes.find(filename);
-		if (it != m_fileSizesBytes.end())
+		auto it = sizesCopy.find(filename);
+		if (it != sizesCopy.end())
 		{
 			int64_t sizeBytes = it->second;
 			wchar_t buf[100] = {};
@@ -2500,16 +2398,16 @@ void CsteamcloudDlg::UpdateFileSizesDisplay()
 	switch (sizeunit)
 	{
 	case 0:
-		quotaText.Format(L"%llu/%llu Bytes used", m_quotaUsed, m_quotaTotal);
+		quotaText.Format(L"%llu/%llu Bytes used", quotaUsed, quotaTotal);
 		break;
 	case 1:
-		quotaText.Format(L"%.4f/%.4f KB used", (float)m_quotaUsed / 1024, (float)m_quotaTotal / 1024);
+		quotaText.Format(L"%.4f/%.4f KB used", (float)quotaUsed / 1024, (float)quotaTotal / 1024);
 		break;
 	case 2:
-		quotaText.Format(L"%.4f/%.4f MB used", (float)m_quotaUsed / (1024 * 1024), (float)m_quotaTotal / (1024 * 1024));
+		quotaText.Format(L"%.4f/%.4f MB used", (float)quotaUsed / (1024 * 1024), (float)quotaTotal / (1024 * 1024));
 		break;
 	default:
-		quotaText.Format(L"%llu/%llu Bytes used", m_quotaUsed, m_quotaTotal);
+		quotaText.Format(L"%llu/%llu Bytes used", quotaUsed, quotaTotal);
 		break;
 	}
 	SetDlgItemTextW(IDC_QUOTA, quotaText);
@@ -2536,12 +2434,10 @@ void CsteamcloudDlg::RequestPipeThread()
 			const char* ping = ".\n";
 			DWORD written = 0;
 			BOOL ok = 1;
-			if (!pipeblocked) // When pipe is not blocked, send ping to worker, otherwise skip it, so we don't block the pipe and don't interrupt user actions
+			if (m_pipeIoMutex.try_lock())
 			{
-				pipeblocked = true; // Set the pipe blocked flag to true to prevent further actions while sending ping
-				Sleep(100); // Ensure the pipe is ready to write
 				ok = WriteFile(m_hRequestPipe, ping, (DWORD)strlen(ping), &written, NULL);
-				pipeblocked = false; // Reset the pipe blocked flag after sending ping
+				m_pipeIoMutex.unlock();
 			}
 				 
 			if (!ok) {

@@ -15,6 +15,8 @@
 #include <algorithm>
 #include <map>
 #include <set>
+#include <mutex>
+#include <atomic>
 #include "json.hpp"
 using json = nlohmann::json;
 using namespace std;
@@ -24,6 +26,8 @@ using namespace std;
 #define WM_DISABLE_CONTROL (WM_USER + 104)
 #define WM_CLEAR_LIST (WM_USER + 105)
 #define WM_UPDATE_COMBOBOX (WM_USER + 106)
+#define WM_SHOW_ASYNC_MESSAGE (WM_USER + 107)
+#define WM_REQUEST_GETFILES (WM_USER + 108)
 #define MAX_UNICODE_PATH 32766
 #define bufferSize 10
 #define WM_SHOWPAGE WM_APP+2
@@ -60,6 +64,12 @@ struct FileRow {
 	bool persisted;
 	bool exists;
 };
+
+struct AsyncMessagePayload {
+	CString title;
+	CString text;
+	UINT flags = MB_OK | MB_TOPMOST;
+};
 class CsteamcloudDlg : public CDialog
 {
 private:
@@ -72,7 +82,6 @@ private:
 	uint64_t m_quotaTotal = 0;
 	uint64_t m_quotaAvailable = 0;
 	bool pipeconnected = false;
-	bool pipeblocked = false;
 	bool m_brokenPipe = false;
 	bool m_statusrequestpipe = false;
 	bool m_statusresponsepipe = false;
@@ -82,11 +91,13 @@ private:
 	bool m_ResponseThreadRunning = false;
 	bool m_RequestThreadWaiting = false;
 	bool m_ResponseThreadWaiting = false;
-	bool active = false;
+	std::atomic<bool> active = false;
 	bool clearing = false;
 	int m_nSortedColumn = -1;
 	bool m_bSortAscending = true;
 	bool firstRun = true;
+	std::mutex m_pipeIoMutex;
+	std::mutex m_dataMutex;
 	void RequestPipeThread();
 	void ResponsePipeThread();
 	thread m_RequestpipeThread;
@@ -108,6 +119,11 @@ private:
 	void DisableControl();
 	LRESULT OnClearList(WPARAM wParam, LPARAM lParam);
 	LRESULT OnUpdateComboBox(WPARAM wParam, LPARAM lParam);
+	LRESULT OnShowAsyncMessage(WPARAM wParam, LPARAM lParam);
+	LRESULT OnRequestGetFiles(WPARAM wParam, LPARAM lParam);
+	void PostAsyncMessage(const CString& title, const CString& text, UINT flags = MB_OK | MB_TOPMOST);
+	bool TryBeginAction();
+	void EndAction();
 
 // Construction
 public:
@@ -206,6 +222,8 @@ public:
 	void GetFiles();
 	void Clearlist();
 	void UpdateFileSizesDisplay();
+	bool SendCommandAndReadResponse(const std::string& command, ULONGLONG timeoutMs, std::string& response);
+	bool EnsureWorkerIdle(std::wstring& statusMessage);
 	bool ReadFromPipeWithTimeout(ULONGLONG timeoutMs, std::string& output);
 	afx_msg void OnBnClickedRefresh();
 	afx_msg void OnBnClickedDisconnect();
