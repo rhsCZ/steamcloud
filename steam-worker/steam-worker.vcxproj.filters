@@ -35,4 +35,9 @@
       <Filter>Soubory zdrojů</Filter>
     </ResourceCompile>
   </ItemGroup>
+  <ItemGroup>
+    <None Include="steam-worker.rc2">
+      <Filter>Soubory zdrojů</Filter>
+    </None>
+  </ItemGroup>
 </Project>

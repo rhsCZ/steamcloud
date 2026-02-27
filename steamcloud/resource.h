@@ -1,13 +1,12 @@
 //{{NO_DEPENDENCIES}}
-// Microsoft Visual C++ vygeneroval soubor zahrnutí.
-// Použito steamcloud.rc
+// Microsoft Visual C++ vygeneroval soubor zahrnutï¿½.
+// Pouï¿½ito steamcloud.rc
 //
 #define IDD_STEAMCLOUD_DIALOG           101
 #define IDR_ICON                        128
 #define ID_MENU_MINIMIZE                129
 #define IDD_DIALOG1                     130
 #define IDR_WORKER                      132
-#define IDR_STEAMDLL				    133
 #define IDC_TRAYEN                      1000
 #define IDC_MINEN                       1001
 #define IDC_LISTFILES                   1002
@@ -39,3 +38,4 @@
 #define _APS_NEXT_SYMED_VALUE           102
 #endif
 #endif
+

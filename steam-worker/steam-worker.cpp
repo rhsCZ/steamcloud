@@ -10,6 +10,87 @@
 #include <mutex>
 #include <atomic>
 #include <condition_variable>
+#include <chrono>
+
+#ifndef IDR_STEAMDLL
+#define IDR_STEAMDLL 101
+#endif
+
+bool ExtractResourceToFile(HINSTANCE hInstance, int resourceId, const std::wstring& outPath) {
+    HRSRC hRes = FindResourceW(hInstance, MAKEINTRESOURCEW(resourceId), RT_RCDATA);
+    if (!hRes) return false;
+
+    DWORD size = SizeofResource(hInstance, hRes);
+    HGLOBAL hData = LoadResource(hInstance, hRes);
+    if (!hData) return false;
+
+    void* pData = LockResource(hData);
+    if (!pData) return false;
+
+    HANDLE hFile = CreateFileW(outPath.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) return false;
+
+    DWORD written = 0;
+    BOOL ok = WriteFile(hFile, pData, size, &written, NULL);
+    CloseHandle(hFile);
+    return ok && written == size;
+}
+
+bool EnsureSteamApiDllAvailable(std::wstring& errorMessage) {
+#if defined(_WIN64)
+    const wchar_t* dllName = L"steam_api64.dll";
+#else
+    const wchar_t* dllName = L"steam_api.dll";
+#endif
+
+    wchar_t modulePath[MAX_PATH] = {};
+    if (GetModuleFileNameW(NULL, modulePath, MAX_PATH) == 0) {
+        errorMessage = L"Unable to read module path.";
+        return false;
+    }
+
+    std::wstring exePath(modulePath);
+    size_t slashPos = exePath.find_last_of(L"\\/");
+    if (slashPos == std::wstring::npos) {
+        errorMessage = L"Invalid module path.";
+        return false;
+    }
+
+    std::wstring exeDir = exePath.substr(0, slashPos);
+    std::wstring dllPathInExeDir = exeDir + L"\\" + dllName;
+
+    DWORD attrs = GetFileAttributesW(dllPathInExeDir.c_str());
+    if (attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+        SetDllDirectoryW(exeDir.c_str());
+        return true;
+    }
+
+    if (ExtractResourceToFile(GetModuleHandleW(NULL), IDR_STEAMDLL, dllPathInExeDir)) {
+        SetDllDirectoryW(exeDir.c_str());
+        return true;
+    }
+
+    wchar_t tempPath[MAX_PATH] = {};
+    DWORD tempLen = GetTempPathW(MAX_PATH, tempPath);
+    if (tempLen == 0 || tempLen > MAX_PATH) {
+        errorMessage = L"Unable to get TEMP path.";
+        return false;
+    }
+
+    std::wstring tempDir(tempPath);
+    if (!tempDir.empty() && (tempDir.back() == L'\\' || tempDir.back() == L'/')) {
+        tempDir.pop_back();
+    }
+
+    std::wstring dllPathInTemp = tempDir + L"\\" + dllName;
+    if (!ExtractResourceToFile(GetModuleHandleW(NULL), IDR_STEAMDLL, dllPathInTemp)) {
+        errorMessage = L"Unable to extract Steam API DLL to executable folder or TEMP.";
+        return false;
+    }
+
+    SetDllDirectoryW(tempDir.c_str());
+    return true;
+}
 
 std::vector<std::string> TokenizeCommand(const std::string& input) {
     std::istringstream iss(input);
@@ -54,13 +135,20 @@ std::string BuildStatusResponse(bool operationInProgress, const std::string& ope
     return oss.str();
 }
 
-void SendResponse(HANDLE hResponsePipe, const std::string& response, std::mutex& responseMutex) {
+bool SendResponse(HANDLE& hResponsePipe, const std::string& response, std::mutex& responseMutex, std::mutex& pipeHandleMutex) {
     std::lock_guard<std::mutex> lock(responseMutex);
+    std::lock_guard<std::mutex> pipeLock(pipeHandleMutex);
+    if (hResponsePipe == INVALID_HANDLE_VALUE || hResponsePipe == NULL) {
+        return false;
+    }
     DWORD bytesWritten = 0;
-    WriteFile(hResponsePipe, response.c_str(), static_cast<DWORD>(response.size()), &bytesWritten, NULL);
+    BOOL ok = WriteFile(hResponsePipe, response.c_str(), static_cast<DWORD>(response.size()), &bytesWritten, NULL);
 #ifdef _DEBUG
-    std::cout << "[server] Response sent: " << response << "\n";
+    if (ok) {
+        std::cout << "[server] Response sent: " << response << "\n";
+    }
 #endif
+    return ok == TRUE;
 }
 
 std::string ExecuteCommand(const CommandTask& task) {
@@ -103,40 +191,20 @@ std::string ExecuteCommand(const CommandTask& task) {
 }
 
 int main() {
+    std::wstring dllError;
+    if (!EnsureSteamApiDllAvailable(dllError)) {
+        std::wcerr << L"[server] " << dllError << L"\n";
+        return 1;
+    }
+
     bool readySent = false;
     char buffer[1024];
     DWORD bytesRead = 0;
-
-    HANDLE hRequestPipe = CreateFileW(
-        L"\\\\.\\pipe\\SteamDlgRequestPipe",
-        GENERIC_READ,
-        0,
-        NULL,
-        OPEN_EXISTING,
-        0,
-        NULL);
-
-    if (hRequestPipe == INVALID_HANDLE_VALUE) {
-        std::cerr << "Unable to connect pipe." << std::endl;
-        return 1;
-    }
-
-    HANDLE hResponsePipe = CreateFileW(
-        L"\\\\.\\pipe\\SteamDlgResponsePipe",
-        GENERIC_WRITE,
-        0,
-        NULL,
-        OPEN_EXISTING,
-        0,
-        NULL);
-
-    if (hResponsePipe == INVALID_HANDLE_VALUE) {
-        CloseHandle(hRequestPipe);
-        std::cerr << "Unable to connect response pipe." << std::endl;
-        return 1;
-    }
+    HANDLE hRequestPipe = INVALID_HANDLE_VALUE;
+    HANDLE hResponsePipe = INVALID_HANDLE_VALUE;
 
     std::mutex responseMutex;
+    std::mutex pipeHandleMutex;
     std::mutex operationMutex;
     std::mutex queueMutex;
     std::condition_variable queueCv;
@@ -159,7 +227,7 @@ int main() {
             }
 
             std::string response = ExecuteCommand(task);
-            SendResponse(hResponsePipe, response, responseMutex);
+            SendResponse(hResponsePipe, response, responseMutex, pipeHandleMutex);
 
             {
                 std::lock_guard<std::mutex> lock(operationMutex);
@@ -169,18 +237,171 @@ int main() {
         }
     });
 
+    auto ClosePipeHandles = [&]() {
+        std::lock_guard<std::mutex> lock(pipeHandleMutex);
+        if (hResponsePipe != INVALID_HANDLE_VALUE && hResponsePipe != NULL) {
+            DisconnectNamedPipe(hResponsePipe);
+            CloseHandle(hResponsePipe);
+            hResponsePipe = INVALID_HANDLE_VALUE;
+        }
+        if (hRequestPipe != INVALID_HANDLE_VALUE && hRequestPipe != NULL) {
+            DisconnectNamedPipe(hRequestPipe);
+            CloseHandle(hRequestPipe);
+            hRequestPipe = INVALID_HANDLE_VALUE;
+        }
+    };
+
+    auto ConnectNamedPipeWithTimeout = [](HANDLE pipeHandle, DWORD timeoutMs) -> bool {
+        OVERLAPPED ov = {};
+        ov.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+        if (ov.hEvent == NULL) {
+            return false;
+        }
+
+        BOOL connected = ConnectNamedPipe(pipeHandle, &ov);
+        if (connected) {
+            CloseHandle(ov.hEvent);
+            return true;
+        }
+
+        DWORD err = GetLastError();
+        if (err == ERROR_PIPE_CONNECTED) {
+            CloseHandle(ov.hEvent);
+            return true;
+        }
+
+        if (err != ERROR_IO_PENDING) {
+            CloseHandle(ov.hEvent);
+            return false;
+        }
+
+        DWORD wait = WaitForSingleObject(ov.hEvent, timeoutMs);
+        if (wait == WAIT_TIMEOUT) {
+            CancelIo(pipeHandle);
+            CloseHandle(ov.hEvent);
+            return false;
+        }
+
+        DWORD transferred = 0;
+        BOOL result = GetOverlappedResult(pipeHandle, &ov, &transferred, FALSE);
+        if (!result && GetLastError() != ERROR_PIPE_CONNECTED) {
+            CloseHandle(ov.hEvent);
+            return false;
+        }
+
+        CloseHandle(ov.hEvent);
+        return true;
+    };
+
+    auto EnsurePipeConnected = [&]() -> bool {
+        {
+            std::lock_guard<std::mutex> lock(pipeHandleMutex);
+            if (hRequestPipe != INVALID_HANDLE_VALUE && hResponsePipe != INVALID_HANDLE_VALUE) {
+                return true;
+            }
+        }
+
+        HANDLE newRequestPipe = CreateNamedPipeW(
+            L"\\\\.\\pipe\\SteamDlgRequestPipe",
+            PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+            1,
+            4096,
+            4096,
+            0,
+            NULL);
+
+        if (newRequestPipe == INVALID_HANDLE_VALUE) {
+            return false;
+        }
+
+        HANDLE newResponsePipe = CreateNamedPipeW(
+            L"\\\\.\\pipe\\SteamDlgResponsePipe",
+            PIPE_ACCESS_OUTBOUND | FILE_FLAG_OVERLAPPED,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+            1,
+            4096,
+            4096,
+            0,
+            NULL);
+
+        if (newResponsePipe == INVALID_HANDLE_VALUE) {
+            CloseHandle(newRequestPipe);
+            return false;
+        }
+
+        bool requestConnected = ConnectNamedPipeWithTimeout(newRequestPipe, 2000);
+        bool responseConnected = ConnectNamedPipeWithTimeout(newResponsePipe, 2000);
+        if (!requestConnected || !responseConnected) {
+            DisconnectNamedPipe(newRequestPipe);
+            DisconnectNamedPipe(newResponsePipe);
+            CloseHandle(newRequestPipe);
+            CloseHandle(newResponsePipe);
+            return false;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(pipeHandleMutex);
+            if (hRequestPipe != INVALID_HANDLE_VALUE && hRequestPipe != NULL) {
+                DisconnectNamedPipe(hRequestPipe);
+                CloseHandle(hRequestPipe);
+            }
+            if (hResponsePipe != INVALID_HANDLE_VALUE && hResponsePipe != NULL) {
+                DisconnectNamedPipe(hResponsePipe);
+                CloseHandle(hResponsePipe);
+            }
+            hRequestPipe = newRequestPipe;
+            hResponsePipe = newResponsePipe;
+        }
+
+        return true;
+    };
+
+    auto IsPipeDisconnectedError = [](DWORD err) -> bool {
+        return err == ERROR_BROKEN_PIPE
+            || err == ERROR_PIPE_NOT_CONNECTED
+            || err == ERROR_NO_DATA
+            || err == ERROR_INVALID_HANDLE
+            || err == ERROR_BAD_PIPE;
+    };
+
+    constexpr auto idleTimeout = std::chrono::minutes(5);
+    auto lastRequestAt = std::chrono::steady_clock::now();
+
     while (true) {
+        if (std::chrono::steady_clock::now() - lastRequestAt >= idleTimeout) {
+            std::cout << "[server] Idle timeout reached (5 minutes), shutting down.\n";
+            break;
+        }
+
+        if (!EnsurePipeConnected()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            continue;
+        }
+
         if (!readySent) {
             readySent = true;
-            SendResponse(hResponsePipe, "READY", responseMutex);
+            SendResponse(hResponsePipe, "READY", responseMutex, pipeHandleMutex);
 #ifdef _DEBUG
             std::cout << "[server] Ready to process commands.\n";
 #endif
         }
 
+        HANDLE requestPipeHandle = INVALID_HANDLE_VALUE;
+        {
+            std::lock_guard<std::mutex> lock(pipeHandleMutex);
+            requestPipeHandle = hRequestPipe;
+        }
+
         DWORD available = 0;
-        if (!PeekNamedPipe(hRequestPipe, NULL, 0, NULL, &available, NULL)) {
-            std::cerr << "Pipe closed by client.\n";
+        if (!PeekNamedPipe(requestPipeHandle, NULL, 0, NULL, &available, NULL)) {
+            DWORD err = GetLastError();
+            if (IsPipeDisconnectedError(err)) {
+                ClosePipeHandles();
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                continue;
+            }
+            std::cerr << "PeekNamedPipe error: " << err << "\n";
             break;
         }
 
@@ -189,8 +410,13 @@ int main() {
             continue;
         }
 
-        if (!ReadFile(hRequestPipe, buffer, sizeof(buffer) - 1, &bytesRead, NULL)) {
+        if (!ReadFile(requestPipeHandle, buffer, sizeof(buffer) - 1, &bytesRead, NULL)) {
             DWORD err = GetLastError();
+            if (IsPipeDisconnectedError(err)) {
+                ClosePipeHandles();
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                continue;
+            }
             std::cerr << "ReadFile error: " << err << "\n";
             break;
         }
@@ -198,6 +424,7 @@ int main() {
         if (bytesRead == 0) {
             continue;
         }
+        lastRequestAt = std::chrono::steady_clock::now();
 
         buffer[bytesRead] = '\0';
         std::string input(buffer);
@@ -224,19 +451,19 @@ int main() {
                 std::lock_guard<std::mutex> lock(operationMutex);
                 runningOperation = currentOperation;
             }
-            SendResponse(hResponsePipe, BuildStatusResponse(busy, runningOperation), responseMutex);
+            SendResponse(hResponsePipe, BuildStatusResponse(busy, runningOperation), responseMutex, pipeHandleMutex);
             continue;
         }
 
         if (command == "exit") {
-            SendResponse(hResponsePipe, R"([{"status":"shutting down"}])", responseMutex);
+            SendResponse(hResponsePipe, R"([{"status":"shutting down"}])", responseMutex, pipeHandleMutex);
             stopRequested.store(true);
             queueCv.notify_one();
             break;
         }
 
         if (!IsOperationCommand(command)) {
-            SendResponse(hResponsePipe, R"([{"error":"unknown command"}])", responseMutex);
+            SendResponse(hResponsePipe, R"([{"error":"unknown command"}])", responseMutex, pipeHandleMutex);
             continue;
         }
 
@@ -250,7 +477,7 @@ int main() {
             if (runningOperation.empty()) {
                 runningOperation = "unknown";
             }
-            SendResponse(hResponsePipe, BuildBusyResponse(runningOperation), responseMutex);
+            SendResponse(hResponsePipe, BuildBusyResponse(runningOperation), responseMutex, pipeHandleMutex);
             continue;
         }
 
@@ -276,8 +503,7 @@ int main() {
         ShutdownSteamAPI();
     }
 
-    CloseHandle(hResponsePipe);
-    CloseHandle(hRequestPipe);
+    ClosePipeHandles();
     std::cout << "[server] Exiting\n";
     return 0;
 }

@@ -477,7 +477,7 @@ void CsteamcloudDlg::RefreshListFromData()
 		wcsftime(dateBuf, sizeof(dateBuf) / sizeof(wchar_t), L"%e.%m.%Y %H:%M:%S", timeinfo);
 		dateStr = dateBuf;
 
-		int itemIndex = listfiles->InsertItem(index, row.name);
+		int itemIndex = listfiles->InsertItem(static_cast<int>(index), row.name);
 		listfiles->SetItemText(itemIndex, 1, dateStr);
 		listfiles->SetItemText(itemIndex, 2, sizeStr);
 		listfiles->SetItemText(itemIndex, 3, row.persisted ? L"true" : L"false");
@@ -529,64 +529,24 @@ BOOL CsteamcloudDlg::OnInitDialog()
 	DWORD outdata = 0;
 	BYTE cmp = 1;
 	type = REG_DWORD;
-	m_hRequestPipe = CreateNamedPipeW(
-		L"\\\\.\\pipe\\SteamDlgRequestPipe",
-		PIPE_ACCESS_OUTBOUND,
-		PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-		1,
-		4096,
-		4096,
-		0,
-		NULL);
-
-	if (m_hRequestPipe == INVALID_HANDLE_VALUE)
+	m_hRequestPipe = INVALID_HANDLE_VALUE;
+	m_hResponsePipe = INVALID_HANDLE_VALUE;
+	m_RequestThreadEnabled = true;
+	m_ResponseThreadEnabled = true;
+	m_RequestpipeThread = std::thread(&CsteamcloudDlg::RequestPipeThread, this);
+	m_ResponsepipeThread = std::thread(&CsteamcloudDlg::ResponsePipeThread, this);
+	if(m_RequestpipeThread.joinable())
 	{
-		::MessageBox(NULL,L"Error creating pipe.", L"Error", MB_OK | MB_ICONERROR);
+		m_RequestpipeThread.detach();
 	}
-	m_hResponsePipe = CreateNamedPipeW(
-		L"\\\\.\\pipe\\SteamDlgResponsePipe",
-		PIPE_ACCESS_INBOUND,
-		PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-		1,
-		4096,
-		4096,
-		0,
-		NULL);
-
-	if (m_hResponsePipe == INVALID_HANDLE_VALUE)
+	if(m_ResponsepipeThread.joinable())
 	{
-		::MessageBox(NULL,L"Error creating response pipe.", L"Error", MB_OK | MB_ICONERROR);
-	}
-
-
-	if(m_hRequestPipe != INVALID_HANDLE_VALUE && m_hResponsePipe != INVALID_HANDLE_VALUE)
-	{
-		DisconnectNamedPipe(m_hRequestPipe);
-		DisconnectNamedPipe(m_hResponsePipe);
-		m_RequestThreadEnabled = true;
-		m_ResponseThreadEnabled = true;
-		m_RequestpipeThread = std::thread(&CsteamcloudDlg::RequestPipeThread, this);
-		m_ResponsepipeThread = std::thread(&CsteamcloudDlg::ResponsePipeThread, this);
-		if(m_RequestpipeThread.joinable())
-		{
-			m_RequestpipeThread.detach();
-		}
-		if(m_ResponsepipeThread.joinable())
-		{
-			m_ResponsepipeThread.detach();
-		}
-	} else
-	{
-		exit(1);
+		m_ResponsepipeThread.detach();
 	}
 	//AfxInitRichEdit2();
-	while (!m_RequestThreadRunning)
+	while (!m_RequestThreadRunning || !m_ResponseThreadRunning)
 	{
-		Sleep(10); // Wait for the request thread to start
-	}
-	while (!m_ResponseThreadRunning)
-	{
-		Sleep(10); // Wait for the response thread to start
+		Sleep(10); // Wait for connection threads to start
 	}
 	CsteamcloudDlg::ShowWindow(SW_SHOW);
 	CsteamcloudDlg::RedrawWindow();
@@ -960,40 +920,6 @@ void CsteamcloudDlg::OnDestroy()
 	}
 	m_RequestThreadEnabled = false;
 	m_ResponseThreadEnabled = false;
-	if(m_RequestThreadWaiting)
-	{
-		// Create a dummy client to unblock the request thread if it's waiting for a connection
-		HANDLE dummyClient = CreateFileW(
-			L"\\\\.\\pipe\\SteamDlgRequestPipe",
-			GENERIC_READ,
-			0,
-			NULL,
-			OPEN_EXISTING,
-			0,
-			NULL);
-		DWORD err = GetLastError();
-		if (dummyClient != INVALID_HANDLE_VALUE)
-		{
-			CloseHandle(dummyClient);
-		}
-	}
-	if(m_ResponseThreadWaiting)
-	{
-		// Create a dummy client to unblock the response thread if it's waiting for a connection
-		HANDLE dummyClient = CreateFileW(
-			L"\\\\.\\pipe\\SteamDlgResponsePipe",
-			GENERIC_WRITE,
-			0,
-			NULL,
-			OPEN_EXISTING,
-			0,
-			NULL);
-		DWORD err = GetLastError();
-		if (dummyClient != INVALID_HANDLE_VALUE)
-		{
-			CloseHandle(dummyClient);
-		}
-	}
 	while(m_RequestThreadRunning)
 	{
 		Sleep(100); // Wait for threads to finish
@@ -1002,15 +928,18 @@ void CsteamcloudDlg::OnDestroy()
 	{
 		Sleep(100); // Wait for threads to finish
 	}
-	if (m_hRequestPipe && m_hRequestPipe != INVALID_HANDLE_VALUE)
 	{
-		CloseHandle(m_hRequestPipe);
-		m_hRequestPipe = NULL;
-	}
-	if (m_hResponsePipe && m_hResponsePipe != INVALID_HANDLE_VALUE)
-	{
-		CloseHandle(m_hResponsePipe);
-		m_hResponsePipe = NULL;
+		std::lock_guard<std::mutex> lock(m_pipeIoMutex);
+		if (m_hRequestPipe && m_hRequestPipe != INVALID_HANDLE_VALUE)
+		{
+			CloseHandle(m_hRequestPipe);
+			m_hRequestPipe = INVALID_HANDLE_VALUE;
+		}
+		if (m_hResponsePipe && m_hResponsePipe != INVALID_HANDLE_VALUE)
+		{
+			CloseHandle(m_hResponsePipe);
+			m_hResponsePipe = INVALID_HANDLE_VALUE;
+		}
 	}
 	CDialog::OnDestroy();
 	if (m_nidIconData.hWnd && m_nidIconData.uID > 0 && TrayIsVisible())
@@ -1367,30 +1296,108 @@ void CsteamcloudDlg::OnBnClickedConnect()
 	}
 
 	thread([this, appid]() {
-	if ((m_hWorkerProcess == NULL || m_hWorkerProcess == INVALID_HANDLE_VALUE) && (!m_ResponseThreadWaiting || !m_RequestThreadWaiting))
-	{
-		Sleep(300); // Ensure the pipes are ready.
-		if (!m_ResponseThreadWaiting || !m_RequestThreadWaiting)
+	PostMessage(WM_CLEAR_LIST); // Clear the list before connecting
+
+	auto waitForPipeConnection = [&](ULONGLONG timeoutMs) -> bool {
+		ULONGLONG start = GetTickCount64();
+		while ((GetTickCount64() - start) < timeoutMs)
 		{
-			PostAsyncMessage(L"ERROR", L"Pipe threads are not ready, please try again later.", MB_OK | MB_ICONERROR | MB_TOPMOST);
-			EndAction();
-			return;
+			if (m_statusrequestpipe && m_statusresponsepipe)
+			{
+				return true;
+			}
+			Sleep(100);
+		}
+		return false;
+	};
+
+	auto probeWorkerStatus = [&]() -> bool {
+		std::string statusResponse;
+		if (!SendCommandAndReadResponse("status\n", 2000, statusResponse)) {
+			return false;
+		}
+		try {
+			auto parsed = json::parse(statusResponse);
+			if (!parsed.is_array() || parsed.empty()) return false;
+			std::string status = parsed[0].value("status", "");
+			return !status.empty();
+		}
+		catch (...) {
+			return false;
+		}
+	};
+
+	auto rememberRunningWorkerHandle = [&]() {
+		if (m_hWorkerProcess && m_hWorkerProcess != INVALID_HANDLE_VALUE) return;
+		DWORD pid = GetProcessPIDByName(L"steam-worker.exe");
+		if (pid != 0) {
+			HANDLE h = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, FALSE, pid);
+			if (h != NULL && h != INVALID_HANDLE_VALUE) {
+				m_hWorkerProcess = h;
+			}
+		}
+	};
+
+	auto waitForReadyAfterStart = [&](ULONGLONG timeoutMs) -> bool {
+		if (!waitForPipeConnection(timeoutMs)) {
+			return false;
+		}
+		std::string output;
+		bool gotReady = false;
+		{
+			std::lock_guard<std::mutex> lock(m_pipeIoMutex);
+			gotReady = ReadFromPipeWithTimeout(timeoutMs, output);
+		}
+		return gotReady && output == "READY";
+	};
+
+	auto startWorkerFromPath = [&](const CString& workerPath) -> bool {
+		PROCESS_INFORMATION pi;
+		STARTUPINFOW si = { sizeof(si) };
+		if (!CreateProcessW(workerPath, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+			return false;
+		}
+		if (m_hWorkerProcess && m_hWorkerProcess != INVALID_HANDLE_VALUE) {
+			CloseHandle(m_hWorkerProcess);
+		}
+		m_hWorkerProcess = pi.hProcess;
+		CloseHandle(pi.hThread);
+		if (!waitForReadyAfterStart(10000)) {
+			TerminateProcess(m_hWorkerProcess, 1);
+			CloseHandle(m_hWorkerProcess);
+			m_hWorkerProcess = NULL;
+			return false;
+		}
+		return true;
+	};
+
+	bool workerAvailable = false;
+	if (waitForPipeConnection(1500) && probeWorkerStatus()) {
+		workerAvailable = true;
+		rememberRunningWorkerHandle();
+	}
+
+	if (!workerAvailable)
+	{
+		WCHAR modulePath[MAX_PATH] = { 0 };
+		if (GetModuleFileNameW(NULL, modulePath, MAX_PATH) > 0)
+		{
+			CString exePath(modulePath);
+			int slash = exePath.ReverseFind(L'\\');
+			if (slash > 0)
+			{
+				CString exeDir = exePath.Left(slash);
+				CString localWorkerPath = exeDir + L"\\steam-worker.exe";
+				if (PathFileExistsW(localWorkerPath))
+				{
+					workerAvailable = startWorkerFromPath(localWorkerPath);
+				}
+			}
 		}
 	}
 
-	PostMessage(WM_CLEAR_LIST); // Clear the list before connecting
-	// If the worker process is not running, start it
-	if (m_hWorkerProcess == NULL)
+	if (!workerAvailable)
 	{
-		if(GetProcessPIDByName(L"steam-worker.exe") != 0) {
-			KillAllSteamWorkerProcesses(); // Ensure no other worker processes are running
-			if(GetProcessPIDByName(L"steam-worker.exe") != 0) {
-				PostAsyncMessage(L"Error", L"Unable to kill steam-worker.exe process. Please try terminate it or restart PC.", MB_OK | MB_ICONERROR | MB_TOPMOST);
-				EndAction();
-				return;
-			}
-		}
-		// Get TEMP path
 		WCHAR tempPath[MAX_PATH];
 		if (!GetEnvironmentVariableW(L"TEMP", tempPath, MAX_PATH)) {
 			PostAsyncMessage(L"Error", L"Cannot get TEMP path.", MB_OK | MB_ICONERROR | MB_TOPMOST);
@@ -1398,75 +1405,32 @@ void CsteamcloudDlg::OnBnClickedConnect()
 			return;
 		}
 		CString workerPath = CString(tempPath) + L"\\steam-worker.exe";
-		CString dllPath;
-#ifdef _WIN64
-		dllPath = CString(tempPath) + L"\\steam_api64.dll";
-#else
-		dllPath = CString(tempPath) + L"\\steam_api.dll";
-#endif
 
-		// Resource extraction
-		if (!PathFileExistsW(workerPath)) {
-			DeleteFileW(workerPath); // Remove Previous Version if exists - needed when steam-worker.exe is updated
+		if (PathFileExistsW(workerPath)) {
+			DeleteFileW(workerPath);
 		}
 		if (!ExtractResourceToFile(AfxGetInstanceHandle(), MAKEINTRESOURCE(IDR_WORKER), RT_RCDATA, workerPath)) {
 			PostAsyncMessage(L"Error", L"Unable to extract steam-worker.exe!", MB_OK | MB_ICONERROR | MB_TOPMOST);
-			DeleteFileW(workerPath); // Clean up the worker executable if extraction fails
 			EndAction();
 			return;
 		}
-		if (!PathFileExistsW(dllPath)) {
-			DeleteFileW(dllPath); // Remove Previous Version if exists - needed when dll is updated
-		}
-		if (!ExtractResourceToFile(AfxGetInstanceHandle(), MAKEINTRESOURCE(IDR_STEAMDLL), RT_RCDATA, dllPath)) {
-			PostAsyncMessage(L"Error", L"Cannot extract steam_api DLL!", MB_OK | MB_ICONERROR | MB_TOPMOST);
-			DeleteFileW(workerPath); // Clean up the worker executable if DLL extraction fails
-			EndAction();
-			return;
-		}
-
-		// Running the worker process
-		PROCESS_INFORMATION pi;
-		STARTUPINFOW si = { sizeof(si) };
-		if (!CreateProcessW(workerPath, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
-			PostAsyncMessage(L"Error", L"Failed to start steam-worker.exe", MB_OK | MB_ICONERROR | MB_TOPMOST);
-			EndAction();
-			return;
-		}
-		while(m_ResponseThreadWaiting)
-		{
-			Sleep(100); // Wait for the response pipe to be ready
-		}
-		m_hWorkerProcess = pi.hProcess;
-		CloseHandle(pi.hThread);
-		// Wait for the worker to send "READY" message - this is crucial to ensure the worker is ready before sending any commands
-		std::string output;
-		const DWORD timeoutMs = 10000;
-		bool gotReady = false;
-		{
-			std::lock_guard<std::mutex> lock(m_pipeIoMutex);
-			gotReady = ReadFromPipeWithTimeout(timeoutMs, output);
-		}
-		if (!gotReady)
-		{
-			PostAsyncMessage(L"Error", L"Worker doesn't respond within 10s.", MB_OK | MB_ICONERROR | MB_TOPMOST);
-			TerminateProcess(m_hWorkerProcess, 1);
-			CloseHandle(m_hWorkerProcess);
-			m_hWorkerProcess = NULL;
-			EndAction();
-			return;
-		}
-
-		if (output != "READY")
-		{
-			PostAsyncMessage(L"Error", L"Worker didn't send READY", MB_OK | MB_ICONERROR | MB_TOPMOST);
-			TerminateProcess(m_hWorkerProcess, 1);
-			CloseHandle(m_hWorkerProcess);
-			m_hWorkerProcess = NULL;
-			EndAction();
-			return;
-		}
+		workerAvailable = startWorkerFromPath(workerPath);
 	}
+
+	if (!workerAvailable)
+	{
+		PostAsyncMessage(L"Error", L"Unable to start or connect to steam-worker.", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		EndAction();
+		return;
+	}
+
+	if (!waitForPipeConnection(4000) || !probeWorkerStatus())
+	{
+		PostAsyncMessage(L"Error", L"Worker pipe is connected, but status check failed.", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		EndAction();
+		return;
+	}
+
 	Sleep(400); // Ensure the worker is ready to receive commands
 	std::wstring statusMessage;
 	if (!EnsureWorkerIdle(statusMessage)) {
@@ -1503,7 +1467,7 @@ void CsteamcloudDlg::OnBnClickedConnect()
 				PostMessage(WM_CLEAR_LIST, 0, 0); // Clear the file list
 				init = false;
 				EndAction();
-				PostAsyncMessage(L"SteamAPI Error", CA2W(status.c_str()), MB_OK | MB_ICONERROR | MB_TOPMOST);
+				PostAsyncMessage(L"SteamAPI Error", CString(CA2W(status.c_str())), MB_OK | MB_ICONERROR | MB_TOPMOST);
 				return;
 			}
 		}
@@ -1512,7 +1476,7 @@ void CsteamcloudDlg::OnBnClickedConnect()
 		PostMessage(WM_CLEAR_LIST, 0, 0); // Clear the file list
 		init = false;
 		EndAction();
-		PostAsyncMessage(L"Worker Response", CA2W(response.c_str()), MB_OK | MB_ICONERROR | MB_TOPMOST);
+		PostAsyncMessage(L"Worker Response", CString(CA2W(response.c_str())), MB_OK | MB_ICONERROR | MB_TOPMOST);
 		return;
 	}
 	catch (const std::exception& e) {
@@ -2417,23 +2381,35 @@ void CsteamcloudDlg::RequestPipeThread()
 	while (m_RequestThreadEnabled)
 	{
 		m_RequestThreadRunning = true;
-		m_RequestThreadWaiting = true; // Set the request thread waiting flag to true indicating the thread is waiting for a connection
-		BOOL connected = ConnectNamedPipe(m_hRequestPipe, NULL) ?
-			TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
-		m_RequestThreadWaiting = false; // Set the request thread waiting flag to false indicating the thread is no longer waiting for a connection
-		if (!m_RequestThreadEnabled) break; // If the request thread is disabled, exit the loop immediately
-		if (!connected) {
-			Sleep(100); // delay before retrying connection
+		m_RequestThreadWaiting = true;
+		HANDLE requestPipe = CreateFileW(
+			L"\\\\.\\pipe\\SteamDlgRequestPipe",
+			GENERIC_WRITE,
+			0,
+			NULL,
+			OPEN_EXISTING,
+			0,
+			NULL);
+		if (requestPipe == INVALID_HANDLE_VALUE)
+		{
+			Sleep(100);
 			continue;
 		}
-		
-		m_brokenPipe = false; // Reset broken pipe status
+		{
+			std::lock_guard<std::mutex> lock(m_pipeIoMutex);
+			if (m_hRequestPipe && m_hRequestPipe != INVALID_HANDLE_VALUE) {
+				CloseHandle(m_hRequestPipe);
+			}
+			m_hRequestPipe = requestPipe;
+		}
+		m_RequestThreadWaiting = false;
+		m_statusrequestpipe = true;
+
 		while (m_RequestThreadEnabled)
 		{
-			m_statusrequestpipe = true;
 			const char* ping = ".\n";
 			DWORD written = 0;
-			BOOL ok = 1;
+			BOOL ok = TRUE;
 			if (m_pipeIoMutex.try_lock())
 			{
 				ok = WriteFile(m_hRequestPipe, ping, (DWORD)strlen(ping), &written, NULL);
@@ -2442,47 +2418,78 @@ void CsteamcloudDlg::RequestPipeThread()
 				 
 			if (!ok) {
 				DWORD err = GetLastError();
-				if (err == ERROR_BROKEN_PIPE || err == ERROR_PIPE_NOT_CONNECTED || err == ERROR_NO_DATA) {
-					m_brokenPipe = true;
+				if (err == ERROR_BROKEN_PIPE || err == ERROR_PIPE_NOT_CONNECTED || err == ERROR_NO_DATA || err == ERROR_INVALID_HANDLE) {
+					{
+						std::lock_guard<std::mutex> lock(m_pipeIoMutex);
+						if (m_hRequestPipe && m_hRequestPipe != INVALID_HANDLE_VALUE) {
+							CloseHandle(m_hRequestPipe);
+							m_hRequestPipe = INVALID_HANDLE_VALUE;
+						}
+					}
 					m_statusrequestpipe = false;
 					break;
 				}
 			}
 
-			Sleep(800); // sleep for 150 ms to avoid busy waiting and reduce CPU usage
+			Sleep(800);
 		}
-
-		// pipe is broken, we need to disconnect it and wait for the next connection
-		DisconnectNamedPipe(m_hRequestPipe);
 	}
-	m_RequestThreadRunning = false; // Set the request thread running flag to false indicating the thread has finished execution
+	m_RequestThreadRunning = false;
 }
 void CsteamcloudDlg::ResponsePipeThread()
 {
 	while (m_ResponseThreadEnabled)
 	{
 		m_ResponseThreadRunning = true;
-		// wait for client to connect to response pipe
 		m_ResponseThreadWaiting = true;
-		BOOL connected = ConnectNamedPipe(m_hResponsePipe, NULL) ?
-			TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
-		m_ResponseThreadWaiting = false;
-		if (!m_ResponseThreadEnabled) break; // If the response thread is disabled, exit the loop immediately
-		if (!connected)
+		HANDLE responsePipe = CreateFileW(
+			L"\\\\.\\pipe\\SteamDlgResponsePipe",
+			GENERIC_READ,
+			0,
+			NULL,
+			OPEN_EXISTING,
+			0,
+			NULL);
+		if (responsePipe == INVALID_HANDLE_VALUE)
 		{
-			Sleep(100); // delay before retrying connection
+			Sleep(100);
 			continue;
 		}
-		m_statusresponsepipe = true;
-		// wait until another thread sets m_brokenPipe to true
-		while (!m_brokenPipe && m_ResponseThreadEnabled)
 		{
-			Sleep(800); // sleep for 150 ms to avoid busy waiting and reduce CPU usage
+			std::lock_guard<std::mutex> lock(m_pipeIoMutex);
+			if (m_hResponsePipe && m_hResponsePipe != INVALID_HANDLE_VALUE) {
+				CloseHandle(m_hResponsePipe);
+			}
+			m_hResponsePipe = responsePipe;
 		}
-		m_statusresponsepipe = false;
-		// pipe is broken, we need to disconnect it and wait for the next connection
-		DisconnectNamedPipe(m_hResponsePipe);
+		m_ResponseThreadWaiting = false;
+		m_statusresponsepipe = true;
+
+		while (m_ResponseThreadEnabled)
+		{
+			if (m_pipeIoMutex.try_lock())
+			{
+				DWORD available = 0;
+				BOOL ok = PeekNamedPipe(m_hResponsePipe, NULL, 0, NULL, &available, NULL);
+				m_pipeIoMutex.unlock();
+				if (!ok)
+				{
+					DWORD err = GetLastError();
+					if (err == ERROR_BROKEN_PIPE || err == ERROR_PIPE_NOT_CONNECTED || err == ERROR_NO_DATA || err == ERROR_INVALID_HANDLE)
+					{
+						std::lock_guard<std::mutex> lock(m_pipeIoMutex);
+						if (m_hResponsePipe && m_hResponsePipe != INVALID_HANDLE_VALUE) {
+							CloseHandle(m_hResponsePipe);
+							m_hResponsePipe = INVALID_HANDLE_VALUE;
+						}
+						m_statusresponsepipe = false;
+						break;
+					}
+				}
+			}
+			Sleep(300);
+		}
 	}
-	m_ResponseThreadRunning = false; // Set the response thread running flag to false indicating the thread has finished execution
+	m_ResponseThreadRunning = false;
 }
 
