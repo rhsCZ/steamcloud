@@ -1,5 +1,5 @@
 #if defined(WIN64)
-101 RCDATA "steam_api64.dll"
+IDR_STEAMDLL RCDATA "steam_api64.dll"
 #else
-101 RCDATA "steam_api.dll"
+IDR_STEAMDLL RCDATA "steam_api.dll"
 #endif

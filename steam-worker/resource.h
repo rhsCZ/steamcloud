@@ -2,6 +2,8 @@
 // Microsoft Visual C++ generated include file.
 // Used by Resource.rc
 
+#define IDR_STEAMDLL                     101
+
 // Další výchozí hodnoty pro nové objekty
 // 
 #ifdef APSTUDIO_INVOKED

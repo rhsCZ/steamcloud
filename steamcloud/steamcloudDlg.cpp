@@ -1405,9 +1405,17 @@ void CsteamcloudDlg::OnBnClickedConnect()
 			return;
 		}
 		CString workerPath = CString(tempPath) + L"\\steam-worker.exe";
+		CString steamApiDll32Path = CString(tempPath) + L"\\steam_api.dll";
+		CString steamApiDll64Path = CString(tempPath) + L"\\steam_api64.dll";
 
 		if (PathFileExistsW(workerPath)) {
 			DeleteFileW(workerPath);
+		}
+		if (PathFileExistsW(steamApiDll32Path)) {
+			DeleteFileW(steamApiDll32Path);
+		}
+		if (PathFileExistsW(steamApiDll64Path)) {
+			DeleteFileW(steamApiDll64Path);
 		}
 		if (!ExtractResourceToFile(AfxGetInstanceHandle(), MAKEINTRESOURCE(IDR_WORKER), RT_RCDATA, workerPath)) {
 			PostAsyncMessage(L"Error", L"Unable to extract steam-worker.exe!", MB_OK | MB_ICONERROR | MB_TOPMOST);

@@ -104,6 +104,8 @@ std::vector<std::string> TokenizeCommand(const std::string& input) {
 
 struct CommandTask {
     std::vector<std::string> tokens;
+    bool respondToPipe = true;
+    bool respondToStdout = false;
 };
 
 bool IsOperationCommand(const std::string& command) {
@@ -149,6 +151,25 @@ bool SendResponse(HANDLE& hResponsePipe, const std::string& response, std::mutex
     }
 #endif
     return ok == TRUE;
+}
+
+void SendConsoleResponse(const std::string& response) {
+    std::cout << response << "\n";
+}
+
+void EmitResponse(
+    const CommandTask& task,
+    const std::string& response,
+    HANDLE& hResponsePipe,
+    std::mutex& responseMutex,
+    std::mutex& pipeHandleMutex)
+{
+    if (task.respondToPipe) {
+        SendResponse(hResponsePipe, response, responseMutex, pipeHandleMutex);
+    }
+    if (task.respondToStdout) {
+        SendConsoleResponse(response);
+    }
 }
 
 std::string ExecuteCommand(const CommandTask& task) {
@@ -211,6 +232,7 @@ int main() {
     std::queue<CommandTask> commandQueue;
     std::atomic<bool> stopRequested(false);
     std::atomic<bool> operationInProgress(false);
+    std::atomic<ULONGLONG> lastRequestTick(GetTickCount64());
     std::string currentOperation;
 
     std::thread worker([&]() {
@@ -227,7 +249,7 @@ int main() {
             }
 
             std::string response = ExecuteCommand(task);
-            SendResponse(hResponsePipe, response, responseMutex, pipeHandleMutex);
+            EmitResponse(task, response, hResponsePipe, responseMutex, pipeHandleMutex);
 
             {
                 std::lock_guard<std::mutex> lock(operationMutex);
@@ -251,7 +273,7 @@ int main() {
         }
     };
 
-    auto ConnectNamedPipeWithTimeout = [](HANDLE pipeHandle, DWORD timeoutMs) -> bool {
+    auto ConnectNamedPipeWithTimeout = [&stopRequested](HANDLE pipeHandle, DWORD timeoutMs) -> bool {
         OVERLAPPED ov = {};
         ov.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
         if (ov.hEvent == NULL) {
@@ -277,6 +299,11 @@ int main() {
 
         DWORD wait = WaitForSingleObject(ov.hEvent, timeoutMs);
         if (wait == WAIT_TIMEOUT) {
+            CancelIo(pipeHandle);
+            CloseHandle(ov.hEvent);
+            return false;
+        }
+        if (stopRequested.load()) {
             CancelIo(pipeHandle);
             CloseHandle(ov.hEvent);
             return false;
@@ -365,16 +392,91 @@ int main() {
             || err == ERROR_BAD_PIPE;
     };
 
-    constexpr auto idleTimeout = std::chrono::minutes(5);
-    auto lastRequestAt = std::chrono::steady_clock::now();
+#ifdef _DEBUG
+    std::thread stdinThread([&]() {
+        std::string input;
+        while (!stopRequested.load()) {
+            if (!std::getline(std::cin, input)) {
+                break;
+            }
+
+            lastRequestTick.store(GetTickCount64());
+            auto tokens = TokenizeCommand(input);
+            if (tokens.empty()) {
+                continue;
+            }
+
+            const std::string& command = tokens[0];
+            if (command == ".") {
+                continue;
+            }
+
+            if (command == "status") {
+                bool busy = operationInProgress.load();
+                std::string runningOperation;
+                {
+                    std::lock_guard<std::mutex> lock(operationMutex);
+                    runningOperation = currentOperation;
+                }
+                SendConsoleResponse(BuildStatusResponse(busy, runningOperation));
+                continue;
+            }
+
+            if (command == "exit") {
+                SendConsoleResponse(R"([{"status":"shutting down"}])");
+                stopRequested.store(true);
+                queueCv.notify_one();
+                break;
+            }
+
+            if (!IsOperationCommand(command)) {
+                SendConsoleResponse(R"([{"error":"unknown command"}])");
+                continue;
+            }
+
+            bool expected = false;
+            if (!operationInProgress.compare_exchange_strong(expected, true)) {
+                std::string runningOperation;
+                {
+                    std::lock_guard<std::mutex> lock(operationMutex);
+                    runningOperation = currentOperation;
+                }
+                if (runningOperation.empty()) {
+                    runningOperation = "unknown";
+                }
+                SendConsoleResponse(BuildBusyResponse(runningOperation));
+                continue;
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(operationMutex);
+                currentOperation = command;
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(queueMutex);
+                commandQueue.push(CommandTask{ std::move(tokens), false, true });
+            }
+            queueCv.notify_one();
+        }
+    });
+    stdinThread.detach();
+#endif
 
     while (true) {
-        if (std::chrono::steady_clock::now() - lastRequestAt >= idleTimeout) {
+        if (stopRequested.load()) {
+            break;
+        }
+
+        if (GetTickCount64() - lastRequestTick.load() >= 5ULL * 60ULL * 1000ULL) {
             std::cout << "[server] Idle timeout reached (5 minutes), shutting down.\n";
             break;
         }
 
         if (!EnsurePipeConnected()) {
+            if (stopRequested.load()) {
+                break;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
             continue;
         }
@@ -406,6 +508,9 @@ int main() {
         }
 
         if (available == 0) {
+            if (stopRequested.load()) {
+                break;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
@@ -424,7 +529,7 @@ int main() {
         if (bytesRead == 0) {
             continue;
         }
-        lastRequestAt = std::chrono::steady_clock::now();
+        lastRequestTick.store(GetTickCount64());
 
         buffer[bytesRead] = '\0';
         std::string input(buffer);
@@ -451,19 +556,19 @@ int main() {
                 std::lock_guard<std::mutex> lock(operationMutex);
                 runningOperation = currentOperation;
             }
-            SendResponse(hResponsePipe, BuildStatusResponse(busy, runningOperation), responseMutex, pipeHandleMutex);
+            EmitResponse(CommandTask{ {}, true, false }, BuildStatusResponse(busy, runningOperation), hResponsePipe, responseMutex, pipeHandleMutex);
             continue;
         }
 
         if (command == "exit") {
-            SendResponse(hResponsePipe, R"([{"status":"shutting down"}])", responseMutex, pipeHandleMutex);
+            EmitResponse(CommandTask{ {}, true, false }, R"([{"status":"shutting down"}])", hResponsePipe, responseMutex, pipeHandleMutex);
             stopRequested.store(true);
             queueCv.notify_one();
             break;
         }
 
         if (!IsOperationCommand(command)) {
-            SendResponse(hResponsePipe, R"([{"error":"unknown command"}])", responseMutex, pipeHandleMutex);
+            EmitResponse(CommandTask{ {}, true, false }, R"([{"error":"unknown command"}])", hResponsePipe, responseMutex, pipeHandleMutex);
             continue;
         }
 
@@ -477,7 +582,7 @@ int main() {
             if (runningOperation.empty()) {
                 runningOperation = "unknown";
             }
-            SendResponse(hResponsePipe, BuildBusyResponse(runningOperation), responseMutex, pipeHandleMutex);
+            EmitResponse(CommandTask{ {}, true, false }, BuildBusyResponse(runningOperation), hResponsePipe, responseMutex, pipeHandleMutex);
             continue;
         }
 
@@ -488,7 +593,7 @@ int main() {
 
         {
             std::lock_guard<std::mutex> lock(queueMutex);
-            commandQueue.push(CommandTask{ std::move(tokens) });
+            commandQueue.push(CommandTask{ std::move(tokens), true, false });
         }
         queueCv.notify_one();
     }
