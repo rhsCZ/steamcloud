@@ -1,88 +1,59 @@
-# Project Title
+# SteamCloud Backend
 
-Simple gui hasher is program for hash checksum generator for string. It has simple Graphical User Interface to be simple as possible.
+SteamCloud Backend is a Windows desktop utility for browsing and managing files stored in Steam Remote Storage. The project contains an MFC GUI application (`steamcloud`) and a helper process (`steam-worker`) that communicates with the Steamworks API.
 
-## Getting Started
+The GUI sends commands to the worker through named pipes. The worker initializes Steam for the selected AppID and performs remote storage operations such as listing files, checking quota, uploading, downloading, and deleting cloud files.
 
-These instructions will get you a copy of the project up and running on your local machine for development and testing purposes. See deployment for notes on how to deploy the project on a live system.
+## Features
 
-### Prerequisites
+- Connect to Steam Remote Storage by Steam AppID.
+- List cloud files with size, timestamp, existence, and persistence information.
+- Upload individual files or whole directories.
+- Download selected cloud files.
+- Delete selected cloud files.
+- Display Steam Cloud quota and transferred data size.
+- Build both x86 and x64 Windows binaries.
 
-What things you need to install the software and how to install them
+## Repository Layout
 
-```
-Give examples
-```
+- `steamcloud.sln` - Visual Studio solution for the GUI and worker projects.
+- `steamcloud/` - MFC dialog application and UI resources.
+- `steam-worker/` - console worker process that wraps Steamworks Remote Storage calls.
+- `output/` - default build output directory created by Visual Studio.
+- `releases/` - release artifacts, when present.
+- `INSTALL.md` - build and installation instructions.
+- `USAGE.md` - runtime usage notes.
+- `LICENSE.MD` - GNU General Public License version 3.
 
-### Installing
+## Requirements
 
-A step by step series of examples that tell you how to get a development env running
+- Windows 10 or newer.
+- Visual Studio 2022 with the Desktop development with C++ workload.
+- MSVC toolset `v145`.
+- Windows 10 SDK.
+- Steam client installed and running.
+- A Steam account with access to the target AppID.
+- Steam Cloud enabled for the target app.
 
-Say what the step will be
+## Build
 
-```
-Give the example
-```
+Open `steamcloud.sln` in Visual Studio, select the desired platform (`x86` or `x64`) and configuration (`Debug` or `Release`), then build the solution.
 
-And repeat
+The solution builds:
 
-```
-until finished
-```
+- `steamcloud.exe`
+- `steam-worker.exe`
 
-End with an example of getting some data out of the system or using it for a little demo
+Both projects use `output\$(Platform)\$(Configuration)\` as the output directory.
 
-## Running the tests
+For detailed setup steps, see [INSTALL.md](INSTALL.md).
 
-Explain how to run the automated tests for this system
+## Usage
 
-### Break down into end to end tests
+Run `steamcloud.exe`, enter a Steam AppID, connect, and use the GUI buttons to manage Steam Cloud files for that app.
 
-Explain what these tests test and why
-
-```
-Give an example
-```
-
-### And coding style tests
-
-Explain what these tests test and why
-
-```
-Give an example
-```
-
-## Deployment
-
-Add additional notes about how to deploy this on a live system
-
-## Built With
-
-* [Dropwizard](http://www.dropwizard.io/1.0.2/docs/) - The web framework used
-* [Maven](https://maven.apache.org/) - Dependency Management
-* [ROME](https://rometools.github.io/rome/) - Used to generate RSS Feeds
-
-## Contributing
-
-Please read [CONTRIBUTING.md](https://gist.github.com/PurpleBooth/b24679402957c63ec426) for details on our code of conduct, and the process for submitting pull requests to us.
-
-## Versioning
-
-We use [SemVer](http://semver.org/) for versioning. For the versions available, see the [tags on this repository](https://github.com/your/project/tags). 
-
-## Authors
-
-* **Billie Thompson** - *Initial work* - [PurpleBooth](https://github.com/PurpleBooth)
-
-See also the list of [contributors](https://github.com/your/project/contributors) who participated in this project.
+For detailed usage notes, see [USAGE.md](USAGE.md).
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details
-
-## Acknowledgments
-
-* Hat tip to anyone whose code was used
-* Inspiration
-* etc
-
+This project is licensed under the GNU General Public License version 3. See [LICENSE.MD](LICENSE.MD).
