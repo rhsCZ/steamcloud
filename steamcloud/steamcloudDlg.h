@@ -124,6 +124,10 @@ private:
 	void PostAsyncMessage(const CString& title, const CString& text, UINT flags = MB_OK | MB_TOPMOST);
 	bool TryBeginAction();
 	void EndAction();
+	bool IsWorkerProcessAlive() const;
+	void ClosePipeHandles();
+	void CloseWorkerProcessHandle();
+	void ShutdownWorkerProcess(bool showErrorMessages);
 
 // Construction
 public:

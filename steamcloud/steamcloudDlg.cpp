@@ -420,6 +420,75 @@ void CsteamcloudDlg::EndAction()
 {
 	active.store(false);
 }
+
+bool CsteamcloudDlg::IsWorkerProcessAlive() const
+{
+	if (!m_hWorkerProcess) {
+		return false;
+	}
+
+	return WaitForSingleObject(m_hWorkerProcess, 0) == WAIT_TIMEOUT;
+}
+
+void CsteamcloudDlg::ClosePipeHandles()
+{
+	std::lock_guard<std::mutex> lock(m_pipeIoMutex);
+	if (m_hRequestPipe && m_hRequestPipe != INVALID_HANDLE_VALUE)
+	{
+		CloseHandle(m_hRequestPipe);
+		m_hRequestPipe = INVALID_HANDLE_VALUE;
+	}
+	if (m_hResponsePipe && m_hResponsePipe != INVALID_HANDLE_VALUE)
+	{
+		CloseHandle(m_hResponsePipe);
+		m_hResponsePipe = INVALID_HANDLE_VALUE;
+	}
+	m_statusrequestpipe = false;
+	m_statusresponsepipe = false;
+}
+
+void CsteamcloudDlg::CloseWorkerProcessHandle()
+{
+	if (m_hWorkerProcess)
+	{
+		CloseHandle(m_hWorkerProcess);
+		m_hWorkerProcess = NULL;
+	}
+}
+
+void CsteamcloudDlg::ShutdownWorkerProcess(bool showErrorMessages)
+{
+	const bool workerWasAlive = IsWorkerProcessAlive();
+	const bool canSendExit =
+		workerWasAlive &&
+		m_hRequestPipe &&
+		m_hRequestPipe != INVALID_HANDLE_VALUE;
+
+	if (canSendExit)
+	{
+		std::string response;
+		if (SendCommandAndReadResponse("exit\n", 3000, response))
+		{
+			Sleep(200);
+		}
+		else if (IsWorkerProcessAlive() && showErrorMessages)
+		{
+			PostAsyncMessage(L"Error", L"Unable to write to pipe (exit).", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		}
+	}
+
+	if (IsWorkerProcessAlive())
+	{
+		if (!TerminateProcess(m_hWorkerProcess, 1) && showErrorMessages)
+		{
+			PostAsyncMessage(L"Error", L"The worker process cannot be terminated manually.", MB_OK | MB_ICONERROR | MB_TOPMOST);
+		}
+	}
+
+	ClosePipeHandles();
+	CloseWorkerProcessHandle();
+}
+
 void CsteamcloudDlg::UpdateQuota()
 {
 	uint64_t total = 0;
@@ -823,8 +892,7 @@ void CsteamcloudDlg::OnBnClickedExit()
 	{
 		Sleep(100); // Wait for finishing threads and actions
 	}
-	CsteamcloudDlg::OnDestroy();
-	PostQuitMessage(1);
+	DestroyWindow();
 }
 
 void CsteamcloudDlg::OnBnClickedMinEn()
@@ -901,21 +969,7 @@ void CsteamcloudDlg::OnDestroy()
 	
 	if (init)
 	{
-		if (m_hWorkerProcess && m_hRequestPipe)
-		{
-			std::string response;
-			if (SendCommandAndReadResponse("exit\n", 3000, response))
-			{
-				Sleep(200); // Wait for the worker process to handle the exit command
-
-				DWORD result = WaitForSingleObject(m_hWorkerProcess, 0);
-				if (result == WAIT_TIMEOUT)
-				{
-					// The worker process is still running, terminate it
-					TerminateProcess(m_hWorkerProcess, 1);
-				}
-			}
-		}
+		ShutdownWorkerProcess(false);
 		init = false;
 	}
 	m_RequestThreadEnabled = false;
@@ -928,19 +982,8 @@ void CsteamcloudDlg::OnDestroy()
 	{
 		Sleep(100); // Wait for threads to finish
 	}
-	{
-		std::lock_guard<std::mutex> lock(m_pipeIoMutex);
-		if (m_hRequestPipe && m_hRequestPipe != INVALID_HANDLE_VALUE)
-		{
-			CloseHandle(m_hRequestPipe);
-			m_hRequestPipe = INVALID_HANDLE_VALUE;
-		}
-		if (m_hResponsePipe && m_hResponsePipe != INVALID_HANDLE_VALUE)
-		{
-			CloseHandle(m_hResponsePipe);
-			m_hResponsePipe = INVALID_HANDLE_VALUE;
-		}
-	}
+	ClosePipeHandles();
+	CloseWorkerProcessHandle();
 	CDialog::OnDestroy();
 	if (m_nidIconData.hWnd && m_nidIconData.uID > 0 && TrayIsVisible())
 	{
@@ -2053,31 +2096,9 @@ void CsteamcloudDlg::OnBnClickedDisconnect()
 			return;
 		}
 
-		if (m_hWorkerProcess && m_hRequestPipe)
-		{
-			std::string response;
-			if (!SendCommandAndReadResponse("exit\n", 3000, response)) {
-				PostAsyncMessage(L"Error", L"Unable to write to pipe (exit).", MB_OK | MB_ICONERROR | MB_TOPMOST);
-			}
-			else {
-				Sleep(200);
-				DWORD result = WaitForSingleObject(m_hWorkerProcess, 0);
-				if (result == WAIT_TIMEOUT)
-				{
-					if (!TerminateProcess(m_hWorkerProcess, 1)) {
-						PostAsyncMessage(L"Error", L"The worker process cannot be terminated manually.", MB_OK | MB_ICONERROR | MB_TOPMOST);
-					}
-				}
-			}
-		}
-
-		PostAsyncMessage(L"Info", L"Disconnected from Steam Cloud.", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
 		init = false;
-		if (m_hWorkerProcess)
-		{
-			CloseHandle(m_hWorkerProcess);
-			m_hWorkerProcess = NULL;
-		}
+		ShutdownWorkerProcess(true);
+		PostAsyncMessage(L"Info", L"Disconnected from Steam Cloud.", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
 		PostMessage(WM_DISABLE_CONTROL, 0, 0);
 		PostMessage(WM_CLEAR_LIST, 0, 0);
 		EndAction();

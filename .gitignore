@@ -6,7 +6,7 @@
 releases/
 rhscz.pfx
 rhscz.pvk
-sign.sgui
+*.sgui
 output/
 steamcloud/steam.old
 **/*.old
@@ -15,3 +15,4 @@ steamcloud/steam.old
 **/*.aps
 **/*.aps
 **/.history/
+test/

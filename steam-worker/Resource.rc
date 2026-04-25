@@ -13,10 +13,11 @@
 #undef APSTUDIO_READONLY_SYMBOLS
 
 /////////////////////////////////////////////////////////////////////////////
-// ÄŒeÅ¡tina (ÄŒeskÃ¡ republika) resources
+// Èeština (Èeská republika) resources
 
 #if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_CSY)
 LANGUAGE LANG_CZECH, SUBLANG_DEFAULT
+#pragma code_page(1250)
 
 #ifdef APSTUDIO_INVOKED
 /////////////////////////////////////////////////////////////////////////////
@@ -50,8 +51,8 @@ END
 //
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 2,7,0,0
- PRODUCTVERSION 2,7,0,0
+ FILEVERSION 2,8,0,0
+ PRODUCTVERSION 2,8,0,0
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -68,12 +69,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "rhsCZ"
             VALUE "FileDescription", "Steam backend worker to communicate with steam API"
-            VALUE "FileVersion", "2.7.0.0"
+            VALUE "FileVersion", "2.8.0.0"
             VALUE "InternalName", "steam-worker.exe"
             VALUE "LegalCopyright", "Copyright (C) 2025"
             VALUE "OriginalFilename", "steam-worker.exe"
             VALUE "ProductName", "Steam backend worker"
-            VALUE "ProductVersion", "2.7.0.0"
+            VALUE "ProductVersion", "2.8.0.0"
         END
     END
     BLOCK "VarFileInfo"
@@ -82,22 +83,26 @@ BEGIN
     END
 END
 
-#endif    // ÄŒeÅ¡tina (ÄŒeskÃ¡ republika) resources
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// RCDATA
+//
+
+IDR_STEAMDLL            RCDATA                  "steam_api.dll"
+
+#endif    // Èeština (Èeská republika) resources
 /////////////////////////////////////////////////////////////////////////////
 
 
-
-
-#include "steam-worker.rc2"
 
 #ifndef APSTUDIO_INVOKED
 /////////////////////////////////////////////////////////////////////////////
 //
 // Generated from the TEXTINCLUDE 3 resource.
 //
-
+#include "steam-worker.rc2"
 
 /////////////////////////////////////////////////////////////////////////////
 #endif    // not APSTUDIO_INVOKED
-
 
