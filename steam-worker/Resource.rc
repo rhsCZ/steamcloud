@@ -13,7 +13,7 @@
 #undef APSTUDIO_READONLY_SYMBOLS
 
 /////////////////////////////////////////////////////////////////////////////
-// Èeština (Èeská republika) resources
+// Czech resources
 
 #if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_CSY)
 LANGUAGE LANG_CZECH, SUBLANG_DEFAULT
@@ -84,14 +84,8 @@ BEGIN
 END
 
 
-/////////////////////////////////////////////////////////////////////////////
-//
-// RCDATA
-//
 
-IDR_STEAMDLL            RCDATA                  "steam_api.dll"
-
-#endif    // Èeština (Èeská republika) resources
+#endif    // Czech resources
 /////////////////////////////////////////////////////////////////////////////
 
 
